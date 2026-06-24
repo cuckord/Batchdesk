@@ -15,7 +15,13 @@ import {
 } from 'react-native';
 
 const PROJECT_ID = "batchdesk-3009";
+// Firebase Web API Key for Auth REST operations
+const API_KEY = "AIzaSyDaADKI2-nDHO5G7wFaslzwmSGs3zWwdzc"; 
+
 const BASE_URL = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/students`;
+const AUTH_SIGNIN_URL = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${API_KEY}`;
+const AUTH_SIGNUP_URL = `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${API_KEY}`;
+const AUTH_RESET_URL = `https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${API_KEY}`;
 
 const ACADEMIC_MONTHS = [
   'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
@@ -24,6 +30,7 @@ const ACADEMIC_MONTHS = [
 
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState('login'); 
+  const [authMode, setAuthMode] = useState('login'); // 'login' or 'signup'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
@@ -84,21 +91,70 @@ export default function App() {
   };
 
   useEffect(() => {
-    fetchStudents();
-  }, []);
+    if (currentScreen === 'home') {
+      fetchStudents();
+    }
+  }, [currentScreen]);
 
-  // REAL VALIDATION LOGIN HANDLER
-  const handleLogin = () => {
-    const targetEmail = "an1khil9t@gmail.com";
-    const targetPassword = "MySecurePassword123"; 
+  // DYNAMIC BACKEND AUTH HANDLERS
+  const handleAuth = async () => {
+    if (!email.trim() || !password.trim()) {
+      Alert.alert("Error", "Please fill in all credentials.");
+      return;
+    }
 
-    if (email.trim().toLowerCase() === targetEmail.toLowerCase() && password === targetPassword) {
-      setCurrentScreen('home');
-    } else {
-      Alert.alert(
-        "Authentication Failed", 
-        "Incorrect Email or Password. Please try again."
-      );
+    const payload = {
+      email: email.trim(),
+      password: password.trim(),
+      returnSecureToken: true
+    };
+
+    const targetUrl = authMode === 'login' ? AUTH_SIGNIN_URL : AUTH_SIGNUP_URL;
+
+    try {
+      const response = await fetch(targetUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+
+      if (data.error) {
+        Alert.alert("Authentication Failed", data.error.message);
+      } else {
+        setCurrentScreen('home');
+      }
+    } catch (err) {
+      Alert.alert("Network Error", "Unable to connect to security nodes.");
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    if (!email.trim()) {
+      Alert.alert("Input Required", "Please enter your Email address first to receive reset links.");
+      return;
+    }
+
+    const payload = {
+      requestType: "PASSWORD_RESET",
+      email: email.trim()
+    };
+
+    try {
+      const response = await fetch(AUTH_RESET_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+
+      if (data.error) {
+        Alert.alert("Error", data.error.message);
+      } else {
+        Alert.alert("Link Dispatched", "A password reset link has been successfully sent to your registered Email inbox.");
+      }
+    } catch (err) {
+      Alert.alert("Network Error", "Action aborted.");
     }
   };
 
@@ -135,7 +191,7 @@ export default function App() {
             values: finalHistory.map(h => ({
               mapValue: {
                 fields: {
-                  month: { stringValue: h.month },
+                  month: { stringValue: m.month || selectedMonth },
                   amount: { stringValue: h.amount },
                   status: { stringValue: h.status }
                 }
@@ -309,10 +365,9 @@ export default function App() {
     >
       <StatusBar barStyle="light-content" />
       {currentScreen === 'login' ? (
-        /* --- LOGIN SCREEN --- */
+        /* --- DYNAMIC REGISTER/LOGIN SCREEN --- */
         <View style={styles.innerContainer}>
-          <Text style={styles.title}>Welcome Back</Text>
-          {/* Changed text below as per preference */}
+          <Text style={styles.title}>{authMode === 'login' ? "Welcome Back" : "Create Account"}</Text>
           <Text style={styles.subtitle}>Sign in to your Institute</Text>
 
           <TextInput
@@ -335,9 +390,23 @@ export default function App() {
             onChangeText={setPassword}
           />
 
-          <TouchableOpacity style={styles.button} onPress={handleLogin}>
-            <Text style={styles.buttonText}>Log In</Text>
+          <TouchableOpacity style={styles.button} onPress={handleAuth}>
+            <Text style={styles.buttonText}>{authMode === 'login' ? "Log In" : "Sign Up"}</Text>
           </TouchableOpacity>
+
+          <View style={styles.authSwitchRow}>
+            <TouchableOpacity onPress={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')}>
+              <Text style={styles.switchModeText}>
+                {authMode === 'login' ? "New user? Create Account" : "Have an account? Log In"}
+              </Text>
+            </TouchableOpacity>
+
+            {authMode === 'login' && (
+              <TouchableOpacity onPress={handleForgotPassword}>
+                <Text style={styles.forgotText}>Forgot Password?</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
       ) : (
         /* --- DASHBOARD SCREEN --- */
@@ -658,5 +727,8 @@ const styles = StyleSheet.create({
   deleteActionText: { color: '#EF4444', fontSize: 11, fontWeight: '600' },
   invoiceCreationButton: { backgroundColor: 'rgba(99, 102, 241, 0.1)', borderColor: 'rgba(99, 102, 241, 0.3)', borderWidth: 1, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8 },
   invoiceCreationText: { color: '#6366F1', fontSize: 12, fontWeight: '600' },
-  emptyText: { textAlign: 'center', color: '#94A3B8', marginTop: 30, fontSize: 14 }
+  emptyText: { textAlign: 'center', color: '#94A3B8', marginTop: 30, fontSize: 14 },
+  authSwitchRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 16, paddingHorizontal: 4 },
+  switchModeText: { color: '#6366F1', fontSize: 13, fontWeight: '500' },
+  forgotText: { color: '#94A3B8', fontSize: 13, fontWeight: '500', textDecorationLine: 'underline' }
 });
