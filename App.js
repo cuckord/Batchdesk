@@ -15,7 +15,6 @@ import {
 } from 'react-native';
 
 const PROJECT_ID = "batchdesk-3009";
-// Firebase Web API Key for Auth REST operations
 const API_KEY = "AIzaSyDaADKI2-nDHO5G7wFaslzwmSGs3zWwdzc"; 
 
 const BASE_URL = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/students`;
@@ -30,17 +29,15 @@ const ACADEMIC_MONTHS = [
 
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState('login'); 
-  const [authMode, setAuthMode] = useState('login'); // 'login' or 'signup'
+  const [authMode, setAuthMode] = useState('login'); 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
-  // Filtering, Search, and Live States
   const [selectedMonth, setSelectedMonth] = useState('Jun');
   const [batchFilter, setBatchFilter] = useState('All');
   const [searchQuery, setSearchQuery] = useState(''); 
   const [students, setStudents] = useState([]);
 
-  // Form Field Insertion States
   const [name, setName] = useState('');
   const [studentClass, setStudentClass] = useState('');
   const [batch, setBatch] = useState('Morning'); 
@@ -49,7 +46,6 @@ export default function App() {
   const [admissionMonth, setAdmissionMonth] = useState('Jun'); 
   const [admissionDate, setAdmissionDate] = useState(''); 
 
-  // FETCH MASTER DATA RECOGNITION PIPELINE
   const fetchStudents = async () => {
     try {
       const response = await fetch(BASE_URL);
@@ -96,7 +92,6 @@ export default function App() {
     }
   }, [currentScreen]);
 
-  // DYNAMIC BACKEND AUTH HANDLERS
   const handleAuth = async () => {
     if (!email.trim() || !password.trim()) {
       Alert.alert("Error", "Please fill in all credentials.");
@@ -158,7 +153,6 @@ export default function App() {
     }
   };
 
-  // SUBMIT STUDENT ENTRY
   const handleAddStudent = async () => {
     if (!name.trim() || !amount.trim() || !studentClass.trim() || !phone.trim()) return;
 
@@ -191,7 +185,7 @@ export default function App() {
             values: finalHistory.map(h => ({
               mapValue: {
                 fields: {
-                  month: { stringValue: m.month || selectedMonth },
+                  month: { stringValue: h.month || selectedMonth },
                   amount: { stringValue: h.amount },
                   status: { stringValue: h.status }
                 }
@@ -365,10 +359,10 @@ export default function App() {
     >
       <StatusBar barStyle="light-content" />
       {currentScreen === 'login' ? (
-        /* --- DYNAMIC REGISTER/LOGIN SCREEN --- */
-        <View style={styles.innerContainer}>
+        /* --- FIXED REGISTER/LOGIN SCREEN --- */
+        <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 24, backgroundColor: '#0B1220' }}>
           <Text style={styles.title}>{authMode === 'login' ? "Welcome Back" : "Create Account"}</Text>
-          <Text style={styles.subtitle}>Sign in to your Institute</Text>
+          <Text style={styles.subtitle}>{authMode === 'login' ? "Sign in to your Institute" : "Register new teacher/staff account"}</Text>
 
           <TextInput
             style={styles.input}
@@ -390,23 +384,29 @@ export default function App() {
             onChangeText={setPassword}
           />
 
-          <TouchableOpacity style={styles.button} onPress={handleAuth}>
-            <Text style={styles.buttonText}>{authMode === 'login' ? "Log In" : "Sign Up"}</Text>
+          <TouchableOpacity style={[styles.button, { marginTop: 10 }]} onPress={handleAuth}>
+            <Text style={styles.buttonText}>{authMode === 'login' ? "Log In" : "Sign Up Now"}</Text>
           </TouchableOpacity>
 
-          <View style={styles.authSwitchRow}>
-            <TouchableOpacity onPress={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')}>
-              <Text style={styles.switchModeText}>
-                {authMode === 'login' ? "New user? Create Account" : "Have an account? Log In"}
+          <TouchableOpacity 
+            style={{ marginTop: 24, alignItems: 'center', paddingVertical: 10 }} 
+            onPress={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')}
+          >
+            <Text style={{ color: '#6366F1', fontSize: 16, fontWeight: '600', textDecorationLine: 'underline' }}>
+              {authMode === 'login' ? "New user? Create Account / Sign Up" : "Already have an account? Log In"}
+            </Text>
+          </TouchableOpacity>
+
+          {authMode === 'login' && (
+            <TouchableOpacity 
+              style={{ marginTop: 16, alignItems: 'center', paddingVertical: 10 }} 
+              onPress={handleForgotPassword}
+            >
+              <Text style={{ color: '#94A3B8', fontSize: 14, fontWeight: '500' }}>
+                Forgot Password?
               </Text>
             </TouchableOpacity>
-
-            {authMode === 'login' && (
-              <TouchableOpacity onPress={handleForgotPassword}>
-                <Text style={styles.forgotText}>Forgot Password?</Text>
-              </TouchableOpacity>
-            )}
-          </View>
+          )}
         </View>
       ) : (
         /* --- DASHBOARD SCREEN --- */
@@ -427,7 +427,6 @@ export default function App() {
                 </TouchableOpacity>
               </View>
 
-              {/* MONTH HORIZONTAL SEGMENTATION PANEL */}
               <View style={styles.monthScrollContainer}>
                 <FlatList
                   horizontal
@@ -447,7 +446,6 @@ export default function App() {
                 />
               </View>
 
-              {/* STATS AGGREGATES HUD MODULE */}
               <View style={styles.statsContainer}>
                 <View style={styles.statsCard}>
                   <Text style={styles.statsLabel}>Total Roster</Text>
@@ -463,7 +461,6 @@ export default function App() {
                 </View>
               </View>
 
-              {/* STUDENT ENTRY FORM BLOCK */}
               <View style={styles.inputContainer}>
                 <TextInput
                   style={styles.input}
@@ -509,7 +506,6 @@ export default function App() {
                   </View>
                 </View>
 
-                {/* ADMISSION MONTH BANNER SELECTOR */}
                 <View style={styles.admissionSelectorBlock}>
                   <Text style={styles.admissionLabel}>Admission Starts From:</Text>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{marginVertical: 4}}>
@@ -525,7 +521,6 @@ export default function App() {
                   </ScrollView>
                 </View>
 
-                {/* ADMISSION EXACT DATE INPUT FIELD */}
                 <TextInput
                   style={styles.input}
                   placeholder="Exact Admission Date (e.g. 24-06-2026)"
@@ -548,7 +543,6 @@ export default function App() {
                 </TouchableOpacity>
               </View>
 
-              {/* ENHANCED LIVE FILTER & SEARCH BAR NODE */}
               <View style={styles.searchBlockContainer}>
                 <TextInput 
                   style={styles.searchBarInput}
@@ -666,10 +660,9 @@ export default function App() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0B1220' },
-  innerContainer: { flex: 1, justifyContent: 'center', paddingHorizontal: 24 },
   scrollContainer: { paddingTop: 50, paddingHorizontal: 24, paddingBottom: 40 },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-  title: { fontSize: 32, fontWeight: '700', color: '#E5E7EB', textAlign: 'center' },
+  title: { fontSize: 32, fontWeight: '700', color: '#E5E7EB', textAlign: 'center', marginBottom: 8 },
   titleLeft: { fontSize: 26, fontWeight: '700', color: '#E5E7EB' },
   directoryHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, marginTop: 8 },
   sectionTitle: { fontSize: 12, fontWeight: '600', color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5 },
@@ -727,8 +720,5 @@ const styles = StyleSheet.create({
   deleteActionText: { color: '#EF4444', fontSize: 11, fontWeight: '600' },
   invoiceCreationButton: { backgroundColor: 'rgba(99, 102, 241, 0.1)', borderColor: 'rgba(99, 102, 241, 0.3)', borderWidth: 1, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8 },
   invoiceCreationText: { color: '#6366F1', fontSize: 12, fontWeight: '600' },
-  emptyText: { textAlign: 'center', color: '#94A3B8', marginTop: 30, fontSize: 14 },
-  authSwitchRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 16, paddingHorizontal: 4 },
-  switchModeText: { color: '#6366F1', fontSize: 13, fontWeight: '500' },
-  forgotText: { color: '#94A3B8', fontSize: 13, fontWeight: '500', textDecorationLine: 'underline' }
+  emptyText: { textAlign: 'center', color: '#94A3B8', marginTop: 30, fontSize: 14 }
 });
