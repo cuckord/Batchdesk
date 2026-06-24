@@ -10,7 +10,8 @@ import {
   Platform,
   StatusBar,
   Linking,
-  Alert
+  Alert,
+  ScrollView
 } from 'react-native';
 
 const PROJECT_ID = "batchdesk-3009";
@@ -22,7 +23,7 @@ const ACADEMIC_MONTHS = [
 ];
 
 export default function App() {
-  const [currentScreen, setCurrentScreen] = useState('login'); // Default screen login set kiya hai
+  const [currentScreen, setCurrentScreen] = useState('login'); 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
@@ -38,6 +39,8 @@ export default function App() {
   const [batch, setBatch] = useState('Morning'); 
   const [phone, setPhone] = useState('');
   const [amount, setAmount] = useState('');
+  const [admissionMonth, setAdmissionMonth] = useState('Jun'); 
+  const [admissionDate, setAdmissionDate] = useState(''); 
 
   // FETCH MASTER DATA RECOGNITION PIPELINE
   const fetchStudents = async () => {
@@ -66,6 +69,8 @@ export default function App() {
             class: fields.class?.stringValue || '',
             batch: fields.batch?.stringValue || 'Morning',
             phone: fields.phone?.stringValue || '',
+            admissionMonth: fields.admissionMonth?.stringValue || 'Jan', 
+            admissionDate: fields.admissionDate?.stringValue || 'N/A', 
             history
           };
         });
@@ -85,7 +90,7 @@ export default function App() {
   // REAL VALIDATION LOGIN HANDLER
   const handleLogin = () => {
     const targetEmail = "an1khil9t@gmail.com";
-    const targetPassword = "MySecurePassword123"; // 👈 Yahan apna strong password badal lijiye
+    const targetPassword = "MySecurePassword123"; 
 
     if (email.trim().toLowerCase() === targetEmail.toLowerCase() && password === targetPassword) {
       setCurrentScreen('home');
@@ -123,6 +128,8 @@ export default function App() {
         class: { stringValue: studentClass.trim() },
         batch: { stringValue: batch },
         phone: { stringValue: phone.trim() },
+        admissionMonth: { stringValue: admissionMonth }, 
+        admissionDate: { stringValue: admissionDate.trim() || 'N/A' }, 
         history: {
           arrayValue: {
             values: finalHistory.map(h => ({
@@ -150,6 +157,7 @@ export default function App() {
       setStudentClass('');
       setPhone('');
       setAmount('');
+      setAdmissionDate('');
       fetchStudents(); 
     } catch (err) {
       console.error("REST Push error: ", err);
@@ -171,6 +179,8 @@ export default function App() {
         class: { stringValue: target.class },
         batch: { stringValue: target.batch },
         phone: { stringValue: target.phone },
+        admissionMonth: { stringValue: target.admissionMonth || 'Jan' },
+        admissionDate: { stringValue: target.admissionDate || 'N/A' },
         history: {
           arrayValue: {
             values: updatedHistory.map(h => ({
@@ -215,6 +225,8 @@ export default function App() {
         class: { stringValue: target.class },
         batch: { stringValue: target.batch },
         phone: { stringValue: target.phone },
+        admissionMonth: { stringValue: target.admissionMonth || 'Jan' },
+        admissionDate: { stringValue: target.admissionDate || 'N/A' },
         history: {
           arrayValue: {
             values: updatedHistory.map(h => ({
@@ -243,7 +255,6 @@ export default function App() {
     }
   };
 
-  // REST DELETE WORKER ROUTINE
   const handleDeleteStudent = async (studentId) => {
     try {
       await fetch(`${BASE_URL}/${studentId}`, { method: 'DELETE' });
@@ -253,7 +264,6 @@ export default function App() {
     }
   };
 
-  // NATIVE PROTOCOL COMMUNICATION DISPATCHERS
   const triggerWhatsAppReminder = (name, phoneNum, amt) => {
     const text = `Hello, this is a reminder from the Institute office regarding the pending coaching fee of ₹${amt} for the month of ${selectedMonth} for student ${name}. Please clear it at your earliest convenience.`;
     const url = `whatsapp://send?text=${encodeURIComponent(text)}&phone=91${phoneNum}`;
@@ -267,7 +277,12 @@ export default function App() {
     });
   };
 
-  // SCALING FILTER MATRIX WITH INTEGRATED SEARCH QUERY LOOKUP
+  const isMonthBeforeAdmission = (studentAdmissionMonth, currentSelectedMonth) => {
+    const adminIndex = ACADEMIC_MONTHS.indexOf(studentAdmissionMonth);
+    const currentIndex = ACADEMIC_MONTHS.indexOf(currentSelectedMonth);
+    return currentIndex < adminIndex;
+  };
+
   const filteredStudents = students.filter((student) => {
     const matchesBatch = batchFilter === 'All' || student.batch === batchFilter;
     const matchesSearch = student.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
@@ -275,16 +290,14 @@ export default function App() {
     return matchesBatch && matchesSearch;
   });
 
-  const activeStudentsThisMonth = students.filter((s) =>
-    s.history && s.history.some((h) => h.month === selectedMonth)
-  ).length;
-
-  const totalFeesExpected = students.reduce((sum, student) => {
+  const totalFeesExpected = filteredStudents.reduce((sum, student) => {
+    if (isMonthBeforeAdmission(student.admissionMonth, selectedMonth)) return sum;
     const record = student.history && student.history.find((h) => h.month === selectedMonth);
     return sum + (record ? parseFloat(record.amount) || 0 : 0);
   }, 0);
 
-  const totalFeesPending = students.reduce((sum, student) => {
+  const totalFeesPending = filteredStudents.reduce((sum, student) => {
+    if (isMonthBeforeAdmission(student.admissionMonth, selectedMonth)) return sum;
     const record = student.history && student.history.find((h) => h.month === selectedMonth);
     return sum + (record && record.status === 'Pending' ? parseFloat(record.amount) || 0 : 0);
   }, 0);
@@ -299,7 +312,8 @@ export default function App() {
         /* --- LOGIN SCREEN --- */
         <View style={styles.innerContainer}>
           <Text style={styles.title}>Welcome Back</Text>
-          <Text style={styles.subtitle}>Sign in to your dashboard</Text>
+          {/* Changed text below as per preference */}
+          <Text style={styles.subtitle}>Sign in to your Institute</Text>
 
           <TextInput
             style={styles.input}
@@ -321,7 +335,6 @@ export default function App() {
             onChangeText={setPassword}
           />
 
-          {/* Fixed Button Trigger calling handleLogin */}
           <TouchableOpacity style={styles.button} onPress={handleLogin}>
             <Text style={styles.buttonText}>Log In</Text>
           </TouchableOpacity>
@@ -336,7 +349,6 @@ export default function App() {
             <View>
               <View style={styles.headerRow}>
                 <Text style={styles.titleLeft}>Dashboard</Text>
-                {/* Fixed Logout clearing states */}
                 <TouchableOpacity onPress={() => {
                   setEmail('');
                   setPassword('');
@@ -428,6 +440,31 @@ export default function App() {
                   </View>
                 </View>
 
+                {/* ADMISSION MONTH BANNER SELECTOR */}
+                <View style={styles.admissionSelectorBlock}>
+                  <Text style={styles.admissionLabel}>Admission Starts From:</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{marginVertical: 4}}>
+                    {ACADEMIC_MONTHS.map((m) => (
+                      <TouchableOpacity 
+                        key={m} 
+                        style={[styles.miniMonthPill, admissionMonth === m && styles.miniMonthPillActive]}
+                        onPress={() => setAdmissionMonth(m)}
+                      >
+                        <Text style={[styles.miniMonthText, admissionMonth === m && styles.miniMonthTextActive]}>{m}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+
+                {/* ADMISSION EXACT DATE INPUT FIELD */}
+                <TextInput
+                  style={styles.input}
+                  placeholder="Exact Admission Date (e.g. 24-06-2026)"
+                  placeholderTextColor="#64748B"
+                  value={admissionDate}
+                  onChangeText={setAdmissionDate}
+                />
+
                 <TextInput
                   style={styles.input}
                   placeholder={`Fee Amount for ${selectedMonth} (₹)`}
@@ -446,7 +483,7 @@ export default function App() {
               <View style={styles.searchBlockContainer}>
                 <TextInput 
                   style={styles.searchBarInput}
-                  placeholder="🔍 Search name or phone among 300+ entries..."
+                  placeholder="🔍 Search name or phone among entries..."
                   placeholderTextColor="#64748B"
                   value={searchQuery}
                   onChangeText={setSearchQuery}
@@ -473,6 +510,7 @@ export default function App() {
           }
           renderItem={({ item }) => {
             const currentMonthRecord = item.history && item.history.find((h) => h.month === selectedMonth);
+            const isBeforeAdmission = isMonthBeforeAdmission(item.admissionMonth, selectedMonth);
 
             return (
               <View style={styles.listItem}>
@@ -488,15 +526,27 @@ export default function App() {
                     <Text style={styles.studentSubtext}>{item.class} • 📞 <Text style={{textDecorationLine:'underline'}}>{item.phone}</Text></Text>
                   </TouchableOpacity>
 
-                  {currentMonthRecord ? (
-                    <Text style={styles.studentAmount}>₹{currentMonthRecord.amount}</Text>
+                  {isBeforeAdmission ? (
+                    <Text style={[styles.studentAmount, { color: '#64748B', fontSize: 11, fontStyle: 'italic' }]}>
+                      ⚠️ Starts: {item.admissionMonth} (Date: {item.admissionDate})
+                    </Text>
+                  ) : currentMonthRecord ? (
+                    <View>
+                      <Text style={styles.studentAmount}>₹{currentMonthRecord.amount}</Text>
+                      <Text style={{color: '#94A3B8', fontSize: 10}}>Admitted: {item.admissionDate}</Text>
+                    </View>
                   ) : (
-                    <Text style={[styles.studentAmount, { color: '#64748B' }]}>No invoice</Text>
+                    <View>
+                      <Text style={[styles.studentAmount, { color: '#64748B' }]}>No invoice</Text>
+                      <Text style={{color: '#94A3B8', fontSize: 10}}>Admitted: {item.admissionDate}</Text>
+                    </View>
                   )}
                 </View>
 
                 <View style={{ alignItems: 'flex-end', gap: 6 }}>
-                  {currentMonthRecord ? (
+                  {isBeforeAdmission ? (
+                    <View style={styles.blankBadgePlaceholder} />
+                  ) : currentMonthRecord ? (
                     <TouchableOpacity
                       style={[
                         styles.statusBadge,
@@ -518,7 +568,7 @@ export default function App() {
                   )}
 
                   <View style={{flexDirection: 'row', gap: 4}}>
-                    {currentMonthRecord && currentMonthRecord.status === 'Pending' && (
+                    {!isBeforeAdmission && currentMonthRecord && currentMonthRecord.status === 'Pending' && (
                       <TouchableOpacity 
                         style={styles.whatsappActionBadge}
                         onPress={() => triggerWhatsAppReminder(item.name, item.phone, currentMonthRecord.amount)}
@@ -576,6 +626,12 @@ const styles = StyleSheet.create({
   toggleOptionActive: { backgroundColor: '#1F2937' },
   toggleOptionText: { color: '#64748B', fontSize: 13, fontWeight: '600' },
   toggleOptionTextActive: { color: '#E5E7EB' },
+  admissionSelectorBlock: { backgroundColor: '#111827', padding: 10, borderRadius: 10, marginBottom: 10, borderWidth: 1, borderColor: '#1F2937' },
+  admissionLabel: { color: '#94A3B8', fontSize: 13, fontWeight: '500', marginBottom: 4, paddingLeft: 4 },
+  miniMonthPill: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6, backgroundColor: '#0B1220', marginRight: 6, borderWidth: 1, borderColor: '#1F2937' },
+  miniMonthPillActive: { backgroundColor: '#6366F1', borderColor: '#6366F1' },
+  miniMonthText: { color: '#64748B', fontSize: 12, fontWeight: '600' },
+  miniMonthTextActive: { color: '#FFFFFF' },
   filterPillContainer: { flexDirection: 'row', backgroundColor: '#111827', padding: 4, borderRadius: 8, borderWidth: 1, borderColor: '#1F2937' },
   filterPill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, marginLeft: 4 },
   filterPillActive: { backgroundColor: '#6366F1' },
@@ -595,6 +651,7 @@ const styles = StyleSheet.create({
   badgePaid: { backgroundColor: 'rgba(34, 197, 94, 0.1)', borderColor: 'rgba(34, 197, 94, 0.2)' },
   badgePending: { backgroundColor: 'rgba(239, 68, 68, 0.1)', borderColor: 'rgba(239, 68, 68, 0.2)' },
   statusText: { fontSize: 11, fontWeight: '700' },
+  blankBadgePlaceholder: { height: 26, width: 60 },
   whatsappActionBadge: { backgroundColor: 'rgba(34, 197, 94, 0.05)', borderColor: 'rgba(34, 197, 94, 0.2)', borderWidth: 1, paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6 },
   whatsappActionText: { color: '#22C55E', fontSize: 11, fontWeight: '600' },
   deleteActionBadge: { backgroundColor: 'rgba(239, 68, 68, 0.05)', borderColor: 'rgba(239, 68, 68, 0.2)', borderWidth: 1, paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6 },
