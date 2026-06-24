@@ -22,14 +22,14 @@ const ACADEMIC_MONTHS = [
 ];
 
 export default function App() {
-  const [currentScreen, setCurrentScreen] = useState('home');
+  const [currentScreen, setCurrentScreen] = useState('login'); // Default screen login set kiya hai
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
   // Filtering, Search, and Live States
   const [selectedMonth, setSelectedMonth] = useState('Jun');
   const [batchFilter, setBatchFilter] = useState('All');
-  const [searchQuery, setSearchQuery] = useState(''); // Live search string state
+  const [searchQuery, setSearchQuery] = useState(''); 
   const [students, setStudents] = useState([]);
 
   // Form Field Insertion States
@@ -44,7 +44,7 @@ export default function App() {
     try {
       const response = await fetch(BASE_URL);
       const data = await response.json();
-      
+
       if (data.documents) {
         const formatted = data.documents.map(doc => {
           const id = doc.name.split('/').pop();
@@ -81,6 +81,21 @@ export default function App() {
   useEffect(() => {
     fetchStudents();
   }, []);
+
+  // REAL VALIDATION LOGIN HANDLER
+  const handleLogin = () => {
+    const targetEmail = "an1khil9t@gmail.com";
+    const targetPassword = "MySecurePassword123"; // 👈 Yahan apna strong password badal lijiye
+
+    if (email.trim().toLowerCase() === targetEmail.toLowerCase() && password === targetPassword) {
+      setCurrentScreen('home');
+    } else {
+      Alert.alert(
+        "Authentication Failed", 
+        "Incorrect Email or Password. Please try again."
+      );
+    }
+  };
 
   // SUBMIT STUDENT ENTRY
   const handleAddStudent = async () => {
@@ -130,7 +145,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      
+
       setName('');
       setStudentClass('');
       setPhone('');
@@ -242,7 +257,7 @@ export default function App() {
   const triggerWhatsAppReminder = (name, phoneNum, amt) => {
     const text = `Hello, this is a reminder from the Institute office regarding the pending coaching fee of ₹${amt} for the month of ${selectedMonth} for student ${name}. Please clear it at your earliest convenience.`;
     const url = `whatsapp://send?text=${encodeURIComponent(text)}&phone=91${phoneNum}`;
-    
+
     Linking.canOpenURL(url).then(supported => {
       if (supported) {
         Linking.openURL(url);
@@ -306,7 +321,8 @@ export default function App() {
             onChangeText={setPassword}
           />
 
-          <TouchableOpacity style={styles.button} onPress={() => setCurrentScreen('home')}>
+          {/* Fixed Button Trigger calling handleLogin */}
+          <TouchableOpacity style={styles.button} onPress={handleLogin}>
             <Text style={styles.buttonText}>Log In</Text>
           </TouchableOpacity>
         </View>
@@ -320,7 +336,12 @@ export default function App() {
             <View>
               <View style={styles.headerRow}>
                 <Text style={styles.titleLeft}>Dashboard</Text>
-                <TouchableOpacity onPress={() => setCurrentScreen('login')}>
+                {/* Fixed Logout clearing states */}
+                <TouchableOpacity onPress={() => {
+                  setEmail('');
+                  setPassword('');
+                  setCurrentScreen('login');
+                }}>
                   <Text style={styles.logoutText}>Logout</Text>
                 </TouchableOpacity>
               </View>
@@ -370,7 +391,7 @@ export default function App() {
                   value={name}
                   onChangeText={setName}
                 />
-                
+
                 <View style={styles.rowInputs}>
                   <TextInput
                     style={[styles.input, { flex: 1, marginRight: 8 }]}
@@ -462,8 +483,7 @@ export default function App() {
                       <Text style={styles.batchIndicatorText}>{item.batch ? item.batch[0] : ''}</Text>
                     </View>
                   </View>
-                  
-                  {/* CLICK TO ACTION DEMOGRAPHIC INFO NODES */}
+
                   <TouchableOpacity onPress={() => Linking.openURL(`tel:${item.phone}`)}>
                     <Text style={styles.studentSubtext}>{item.class} • 📞 <Text style={{textDecorationLine:'underline'}}>{item.phone}</Text></Text>
                   </TouchableOpacity>
@@ -475,7 +495,6 @@ export default function App() {
                   )}
                 </View>
 
-                {/* DOUBLE ACTION FLOW BAR CONTAINER */}
                 <View style={{ alignItems: 'flex-end', gap: 6 }}>
                   {currentMonthRecord ? (
                     <TouchableOpacity
@@ -498,7 +517,6 @@ export default function App() {
                     </TouchableOpacity>
                   )}
 
-                  {/* CONDITIONAL ACTION BADGES TRIGGER FOR PENDING COLLECTION FOLLOW-UPS */}
                   <View style={{flexDirection: 'row', gap: 4}}>
                     {currentMonthRecord && currentMonthRecord.status === 'Pending' && (
                       <TouchableOpacity 
@@ -508,7 +526,7 @@ export default function App() {
                         <Text style={styles.whatsappActionText}>💬 Ping</Text>
                       </TouchableOpacity>
                     )}
-                    
+
                     <TouchableOpacity 
                       style={styles.deleteActionBadge}
                       onPress={() => handleDeleteStudent(item.id)}
