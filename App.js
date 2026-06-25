@@ -1,724 +1,723 @@
 import React, { useState, useEffect } from 'react';
-import {
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-  FlatList,
-  KeyboardAvoidingView,
-  Platform,
-  StatusBar,
-  Linking,
-  Alert,
-  ScrollView
+import { 
+  StyleSheet, 
+  Text, 
+  View, 
+  FlatList, 
+  TouchableOpacity, 
+  SafeAreaView, 
+  StatusBar, 
+  TextInput, 
+  ActivityIndicator, 
+  Modal,
+  ScrollView,
+  Linking
 } from 'react-native';
+import { auth } from './firebase';
+import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
+import { 
+  getFirestore, 
+  collection, 
+  onSnapshot, 
+  addDoc, 
+  doc, 
+  deleteDoc, 
+  updateDoc 
+} from 'firebase/firestore';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 
-const PROJECT_ID = "batchdesk-3009";
-const API_KEY = "AIzaSyDaADKI2-nDHO5G7wFaslzwmSGs3zWwdzc"; 
+const db = getFirestore();
 
-const BASE_URL = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/students`;
-const AUTH_SIGNIN_URL = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${API_KEY}`;
-const AUTH_SIGNUP_URL = `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${API_KEY}`;
-const AUTH_RESET_URL = `https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${API_KEY}`;
+const StudentCardItem = React.memo(({ item, selectedMonth, selectedYear, onToggleStatus, onDelete, onSendWhatsApp }) => {
+  const currentKey = `${selectedMonth} ${selectedYear}`;
+  const currentStatus = item.feesHistory && item.feesHistory[currentKey] ? item.feesHistory[currentKey] : 'PENDING';
+  const isPaid = currentStatus === 'PAID';
 
-const ACADEMIC_MONTHS = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
-  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
-];
+  let totalOverdueAmount = 0;
+  if (item.feesHistory) {
+    Object.keys(item.feesHistory).forEach((key) => {
+      if (item.feesHistory[key] === 'PENDING') {
+        totalOverdueAmount += parseFloat(item.feeAmount) || 0;
+      }
+    });
+  }
+  if (totalOverdueAmount === 0 && currentStatus === 'PENDING') {
+    totalOverdueAmount = parseFloat(item.feeAmount) || 0;
+  }
+
+  return (
+    <View style={styles.studentCard}>
+      <View style={styles.cardHeader}>
+        <View style={styles.textContainer}>
+          <Text style={styles.studentName}>{item.name}</Text>
+          <Text style={styles.studentCourse}>Course: {item.course}</Text>
+        </View>
+        <View style={styles.rightHeaderBlock}>
+          <Text style={styles.cardFeeText}>₹{item.feeAmount || '0'}</Text>
+          <TouchableOpacity 
+            onPress={() => onToggleStatus(item, currentKey, currentStatus)}
+            style={[styles.statusBadge, isPaid ? styles.badgePaid : styles.badgePending]}
+          >
+            <Text style={[styles.statusText, isPaid ? styles.textPaid : styles.textPending]}>
+              {currentStatus}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+      <View style={styles.cardFooter}>
+        <Text style={styles.footerMeta}>{item.batch}</Text>
+        <Text style={styles.footerMeta}>Total Due: ₹{totalOverdueAmount}</Text>
+        
+        <View style={styles.actionButtonsCluster}>
+          <TouchableOpacity 
+            onPress={() => onSendWhatsApp(item, totalOverdueAmount)}
+            style={styles.whatsappActionBtn}
+          >
+            <Text style={styles.whatsappActionBtnText}>💬 Remind</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={() => onDelete(item)} style={styles.dropBtn}>
+            <Text style={styles.dropBtnText}>Drop</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </View>
+  );
+});
+
+StudentCardItem.displayName = 'StudentCardItem';
 
 export default function App() {
-  const [currentScreen, setCurrentScreen] = useState('login'); 
-  const [authMode, setAuthMode] = useState('login'); 
+  const [user, setUser] = useState(null);
+  const [isBootstrapping, setIsBootstrapping] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showSplash, setShowSplash] = useState(true);
+
+  const currentYearStr = new Date().getFullYear().toString();
+  const monthsArray = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const currentMonthStr = monthsArray[new Date().getMonth()];
+
+  const [selectedYear, setSelectedYear] = useState(currentYearStr);
+  const [selectedMonth, setSelectedMonth] = useState(currentMonthStr);
+  
+  const [students, setStudents] = useState([]);
+  const [isListLoading, setIsListLoading] = useState(false);
+
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedBatchFilter, setSelectedBatchFilter] = useState('ALL'); 
+  const [activeDashboardTab, setActiveDashboardTab] = useState('LEDGER'); 
+
+  const [statsPaid, setStatsPaid] = useState(0);
+  const [statsPending, setStatsPending] = useState(0);
+  const [morningCount, setMorningCount] = useState(0);
+  const [eveningCount, setEveningCount] = useState(0);
+
+  const [customAlertVisible, setCustomAlertVisible] = useState(false);
+  const [customAlertTitle, setCustomAlertTitle] = useState('');
+  const [customAlertMsg, setCustomAlertMsg] = useState('');
+  const [customAlertConfirmHandler, setCustomAlertConfirmHandler] = useState(null);
+  const [customAlertCancelVisible, setCustomAlertCancelVisible] = useState(true);
+
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
+  
+  const [formName, setFormName] = useState('');
+  const [formPhone, setFormPhone] = useState(''); 
+  const [formCourse, setFormCourse] = useState('');
+  const [formFee, setFormFee] = useState(''); 
+  const [formBatch, setFormBatch] = useState('☀️ Morning Batch');
+  const [formCustomDate, setFormCustomDate] = useState('');
+  const [isFormSaving, setIsFormSaving] = useState(false);
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
-  const [selectedMonth, setSelectedMonth] = useState('Jun');
-  const [batchFilter, setBatchFilter] = useState('All');
-  const [searchQuery, setSearchQuery] = useState(''); 
-  const [students, setStudents] = useState([]);
-
-  const [name, setName] = useState('');
-  const [studentClass, setStudentClass] = useState('');
-  const [batch, setBatch] = useState('Morning'); 
-  const [phone, setPhone] = useState('');
-  const [amount, setAmount] = useState('');
-  const [admissionMonth, setAdmissionMonth] = useState('Jun'); 
-  const [admissionDate, setAdmissionDate] = useState(''); 
-
-  const fetchStudents = async () => {
-    try {
-      const response = await fetch(BASE_URL);
-      const data = await response.json();
-
-      if (data.documents) {
-        const formatted = data.documents.map(doc => {
-          const id = doc.name.split('/').pop();
-          const fields = doc.fields || {};
-
-          const historyArray = fields.history?.arrayValue?.values || [];
-          const history = historyArray.map(item => {
-            const mapFields = item.mapValue?.fields || {};
-            return {
-              month: mapFields.month?.stringValue || '',
-              amount: mapFields.amount?.stringValue || '',
-              status: mapFields.status?.stringValue || 'Pending'
-            };
-          });
-
-          return {
-            id,
-            name: fields.name?.stringValue || '',
-            class: fields.class?.stringValue || '',
-            batch: fields.batch?.stringValue || 'Morning',
-            phone: fields.phone?.stringValue || '',
-            admissionMonth: fields.admissionMonth?.stringValue || 'Jan', 
-            admissionDate: fields.admissionDate?.stringValue || 'N/A', 
-            history
-          };
-        });
-        setStudents(formatted);
-      } else {
-        setStudents([]);
-      }
-    } catch (err) {
-      console.error("REST Fetch error: ", err);
-    }
-  };
+  const yearsArray = Array.from({ length: 15 }, (_, i) => (2024 + i).toString());
 
   useEffect(() => {
-    if (currentScreen === 'home') {
-      fetchStudents();
-    }
-  }, [currentScreen]);
+    const timer = setTimeout(() => { setShowSplash(false); }, 1500);
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setIsBootstrapping(false);
+    }, () => {
+      setIsBootstrapping(false);
+    });
+    return () => { clearTimeout(timer); unsubscribe(); };
+  }, []);
 
-  const handleAuth = async () => {
-    if (!email.trim() || !password.trim()) {
-      Alert.alert("Error", "Please fill in all credentials.");
+  useEffect(() => {
+    if (!user || showSplash) return;
+    setIsListLoading(true);
+    const q = collection(db, 'students');
+    return onSnapshot(q, (snapshot) => {
+      const list = [];
+      snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
+      setStudents(list);
+      setIsListLoading(false);
+    }, () => {
+      setIsListLoading(false);
+    });
+  }, [user, showSplash]);
+
+  useEffect(() => {
+    let paidTotal = 0;
+    let pendingTotal = 0;
+    let morning = 0;
+    let evening = 0;
+    const currentKey = `${selectedMonth} ${selectedYear}`;
+
+    students.forEach((student) => {
+      if (student.isDeleted) return; 
+      const fee = parseFloat(student.feeAmount) || 0;
+      const status = student.feesHistory && student.feesHistory[currentKey] ? student.feesHistory[currentKey] : 'PENDING';
+      
+      if (status === 'PAID') { paidTotal += fee; } else { pendingTotal += fee; }
+      
+      if (student.batch && student.batch.includes('Morning')) { morning++; }
+      if (student.batch && student.batch.includes('Evening')) { evening++; }
+    });
+
+    setStatsPaid(paidTotal);
+    setStatsPending(pendingTotal);
+    setMorningCount(morning);
+    setEveningCount(evening);
+  }, [students, selectedMonth, selectedYear]);
+
+  const triggerCustomAlert = (title, message, onConfirm, showCancel = true) => {
+    setCustomAlertTitle(title);
+    setCustomAlertMsg(message);
+    setCustomAlertConfirmHandler(() => () => {
+      if (onConfirm) onConfirm();
+      setCustomAlertVisible(false);
+    });
+    setCustomAlertCancelVisible(showCancel);
+    setCustomAlertVisible(true);
+  };
+
+  const handleSendWhatsAppReminder = (student, totalDue) => {
+    if (!student.phone || student.phone.trim().length !== 10) {
+      triggerCustomAlert('Validation Alert', 'A valid 10-digit phone tracking metric is required for WhatsApp.', null, false);
       return;
     }
-
-    const payload = {
-      email: email.trim(),
-      password: password.trim(),
-      returnSecureToken: true
-    };
-
-    const targetUrl = authMode === 'login' ? AUTH_SIGNIN_URL : AUTH_SIGNUP_URL;
-
-    try {
-      const response = await fetch(targetUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const data = await response.json();
-
-      if (data.error) {
-        Alert.alert("Authentication Failed", data.error.message);
-      } else {
-        setCurrentScreen('home');
-      }
-    } catch (err) {
-      Alert.alert("Network Error", "Unable to connect to security nodes.");
-    }
-  };
-
-  const handleForgotPassword = async () => {
-    if (!email.trim()) {
-      Alert.alert("Input Required", "Please enter your Email address first to receive reset links.");
-      return;
-    }
-
-    const payload = {
-      requestType: "PASSWORD_RESET",
-      email: email.trim()
-    };
-
-    try {
-      const response = await fetch(AUTH_RESET_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const data = await response.json();
-
-      if (data.error) {
-        Alert.alert("Error", data.error.message);
-      } else {
-        Alert.alert("Link Dispatched", "A password reset link has been successfully sent to your registered Email inbox.");
-      }
-    } catch (err) {
-      Alert.alert("Network Error", "Action aborted.");
-    }
-  };
-
-  const handleAddStudent = async () => {
-    if (!name.trim() || !amount.trim() || !studentClass.trim() || !phone.trim()) return;
-
-    const docId = name.trim().toLowerCase().replace(/\s+/g, '_');
-    const existingStudent = students.find((s) => s.id === docId);
-
-    let finalHistory = [];
-
-    if (existingStudent) {
-      const monthExists = existingStudent.history.some((h) => h.month === selectedMonth);
-      if (monthExists) return; 
-      finalHistory = [
-        ...existingStudent.history,
-        { month: selectedMonth, amount: amount.trim(), status: 'Pending' }
-      ];
-    } else {
-      finalHistory = [{ month: selectedMonth, amount: amount.trim(), status: 'Pending' }];
-    }
-
-    const payload = {
-      fields: {
-        name: { stringValue: name.trim() },
-        class: { stringValue: studentClass.trim() },
-        batch: { stringValue: batch },
-        phone: { stringValue: phone.trim() },
-        admissionMonth: { stringValue: admissionMonth }, 
-        admissionDate: { stringValue: admissionDate.trim() || 'N/A' }, 
-        history: {
-          arrayValue: {
-            values: finalHistory.map(h => ({
-              mapValue: {
-                fields: {
-                  month: { stringValue: h.month || selectedMonth },
-                  amount: { stringValue: h.amount },
-                  status: { stringValue: h.status }
-                }
-              }
-            }))
-          }
-        }
-      }
-    };
-
-    try {
-      await fetch(`${BASE_URL}/${docId}`, {
-        method: 'PATCH', 
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      setName('');
-      setStudentClass('');
-      setPhone('');
-      setAmount('');
-      setAdmissionDate('');
-      fetchStudents(); 
-    } catch (err) {
-      console.error("REST Push error: ", err);
-    }
-  };
-
-  const createMissingInvoice = async (studentId, defaultAmount) => {
-    const target = students.find((s) => s.id === studentId);
-    if (!target) return;
-
-    const updatedHistory = [
-      ...target.history,
-      { month: selectedMonth, amount: defaultAmount || '2000', status: 'Pending' }
-    ];
-
-    const payload = {
-      fields: {
-        name: { stringValue: target.name },
-        class: { stringValue: target.class },
-        batch: { stringValue: target.batch },
-        phone: { stringValue: target.phone },
-        admissionMonth: { stringValue: target.admissionMonth || 'Jan' },
-        admissionDate: { stringValue: target.admissionDate || 'N/A' },
-        history: {
-          arrayValue: {
-            values: updatedHistory.map(h => ({
-              mapValue: {
-                fields: {
-                  month: { stringValue: h.month },
-                  amount: { stringValue: h.amount },
-                  status: { stringValue: h.status }
-                }
-              }
-            }))
-          }
-        }
-      }
-    };
-
-    try {
-      await fetch(`${BASE_URL}/${studentId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      fetchStudents();
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const toggleStatus = async (studentId) => {
-    const target = students.find((s) => s.id === studentId);
-    if (!target) return;
-
-    const updatedHistory = target.history.map((record) =>
-      record.month === selectedMonth
-        ? { ...record, status: record.status === 'Paid' ? 'Pending' : 'Paid' }
-        : record
-    );
-
-    const payload = {
-      fields: {
-        name: { stringValue: target.name },
-        class: { stringValue: target.class },
-        batch: { stringValue: target.batch },
-        phone: { stringValue: target.phone },
-        admissionMonth: { stringValue: target.admissionMonth || 'Jan' },
-        admissionDate: { stringValue: target.admissionDate || 'N/A' },
-        history: {
-          arrayValue: {
-            values: updatedHistory.map(h => ({
-              mapValue: {
-                fields: {
-                  month: { stringValue: h.month },
-                  amount: { stringValue: h.amount },
-                  status: { stringValue: h.status }
-                }
-              }
-            }))
-          }
-        }
-      }
-    };
-
-    try {
-      await fetch(`${BASE_URL}/${studentId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      fetchStudents();
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const handleDeleteStudent = async (studentId) => {
-    try {
-      await fetch(`${BASE_URL}/${studentId}`, { method: 'DELETE' });
-      fetchStudents();
-    } catch (err) {
-      console.error("Delete call anomaly: ", err);
-    }
-  };
-
-  const triggerWhatsAppReminder = (name, phoneNum, amt) => {
-    const text = `Hello, this is a reminder from the Institute office regarding the pending coaching fee of ₹${amt} for the month of ${selectedMonth} for student ${name}. Please clear it at your earliest convenience.`;
-    const url = `whatsapp://send?text=${encodeURIComponent(text)}&phone=91${phoneNum}`;
-
-    Linking.canOpenURL(url).then(supported => {
-      if (supported) {
-        Linking.openURL(url);
-      } else {
-        Linking.openURL(`tel:${phoneNum}`);
-      }
+    const cleanPhone = `91${student.phone.trim()}`;
+    const message = `Hello ${student.name},\nThis is a notification from Batchdesk. Your total accumulated pending tuition fee is *₹${totalDue}*. Kindly settle your balance nodes.\nThank you!`;
+    const url = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
+    Linking.openURL(url).catch(() => {
+      triggerCustomAlert('System Error', 'Could not compile universal link matrix.', null, false);
     });
   };
 
-  const isMonthBeforeAdmission = (studentAdmissionMonth, currentSelectedMonth) => {
-    const adminIndex = ACADEMIC_MONTHS.indexOf(studentAdmissionMonth);
-    const currentIndex = ACADEMIC_MONTHS.indexOf(currentSelectedMonth);
-    return currentIndex < adminIndex;
+  const handleAddStudentSubmit = async () => {
+    const cleanPhone = formPhone.trim().replace(/[^0-9]/g, '');
+    if (!formName.trim() || !formCourse.trim() || !formFee.trim() || cleanPhone.length !== 10) {
+      triggerCustomAlert('Validation Error', 'Please populate valid details. Phone node must be exact 10 digits.', null, false);
+      return;
+    }
+
+    const isDuplicate = students.some(s => !s.isDeleted && s.name.toLowerCase() === formName.trim().toLowerCase() && s.phone === cleanPhone);
+    if (isDuplicate) {
+      triggerCustomAlert('Security Hold', 'A student record with the identical name and phone architecture already exists.', null, false);
+      return;
+    }
+
+    try {
+      setIsFormSaving(true);
+      const today = new Date();
+      const currentDay = today.getDate().toString().padStart(2, '0');
+      const defaultDateStr = `${currentDay} ${currentMonthStr} ${currentYearStr}`;
+      const initialMonthKey = `${selectedMonth} ${selectedYear}`;
+      
+      await addDoc(collection(db, 'students'), {
+        name: formName.trim(),
+        phone: cleanPhone,
+        course: formCourse.trim(),
+        feeAmount: formFee.trim(),
+        batch: formBatch,
+        customJoinDate: formCustomDate.trim() || defaultDateStr,
+        isDeleted: false, 
+        feesHistory: {
+          [initialMonthKey]: 'PAID'
+        }
+      });
+
+      setFormName(''); setFormPhone(''); setFormCourse(''); setFormFee(''); setFormCustomDate('');
+      setIsModalOpen(false);
+      triggerCustomAlert('Success', 'Student node generated across global cluster views.', null, false);
+    } catch (error) {
+      triggerCustomAlert('Error', error.message, null, false);
+    } finally {
+      setIsFormSaving(false);
+    }
   };
 
-  const filteredStudents = students.filter((student) => {
-    const matchesBatch = batchFilter === 'All' || student.batch === batchFilter;
-    const matchesSearch = student.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          student.phone.includes(searchQuery);
-    return matchesBatch && matchesSearch;
-  });
+  const handleToggleFeesStatus = (student, monthKey, currentStatus) => {
+    const targetNextStatus = currentStatus === 'PAID' ? 'PENDING' : 'PAID';
+    triggerCustomAlert(
+      'Confirm Payment Action',
+      `Are you sure you want to alter ${student.name}'s status to ${targetNextStatus} for ${monthKey}?`,
+      async () => {
+        try {
+          const studentRef = doc(db, 'students', student.id);
+          await updateDoc(studentRef, {
+            [`feesHistory.${monthKey}`]: targetNextStatus
+          });
+        } catch (error) {
+          triggerCustomAlert('Sync Failure', 'Could not sync execution matrix states.', null, false);
+        }
+      }
+    );
+  };
 
-  const totalFeesExpected = filteredStudents.reduce((sum, student) => {
-    if (isMonthBeforeAdmission(student.admissionMonth, selectedMonth)) return sum;
-    const record = student.history && student.history.find((h) => h.month === selectedMonth);
-    return sum + (record ? parseFloat(record.amount) || 0 : 0);
-  }, 0);
+  const handleSoftDropStudent = (student) => {
+    triggerCustomAlert(
+      'Move to Trash',
+      `Send ${student.name} to the Recycle Trash Bin node? Active records will hold safely inside background buffers.`,
+      async () => {
+        try {
+          const studentRef = doc(db, 'students', student.id);
+          await updateDoc(studentRef, { isDeleted: true });
+        } catch (error) {
+          triggerCustomAlert('Error', 'Drop processing pipeline failed.', null, false);
+        }
+      }
+    );
+  };
 
-  const totalFeesPending = filteredStudents.reduce((sum, student) => {
-    if (isMonthBeforeAdmission(student.admissionMonth, selectedMonth)) return sum;
-    const record = student.history && student.history.find((h) => h.month === selectedMonth);
-    return sum + (record && record.status === 'Pending' ? parseFloat(record.amount) || 0 : 0);
-  }, 0);
+  const handleRestoreStudent = (studentId) => {
+    try {
+      const studentRef = doc(db, 'students', studentId);
+      updateDoc(studentRef, { isDeleted: false });
+      triggerCustomAlert('Restored', 'Student node brought back to active roster grids.', null, false);
+    } catch (error) {
+      triggerCustomAlert('Error', 'Could not finalize restoration pipelines.', null, false);
+    }
+  };
+
+  const handlePermanentPurgeStudent = (studentId) => {
+    triggerCustomAlert(
+      '🚨 Permanent Delete',
+      'This action is irreversible. Completely clear this student block from core database blocks?',
+      async () => {
+        try {
+          await deleteDoc(doc(db, 'students', studentId));
+        } catch (error) {
+          triggerCustomAlert('Error', 'Purge pipeline failed.', null, false);
+        }
+      }
+    );
+  };
+
+  const handleExportMonthlyLedgerCSV = async () => {
+    const currentKey = `${selectedMonth} ${selectedYear}`;
+    let csvContent = 'Student Name,Phone Node,Course,Batch,Admission Date,Fee Status,Amount\n';
+    
+    const targetDataset = students.filter(s => !s.isDeleted);
+    if (targetDataset.length === 0) {
+      triggerCustomAlert('Export Alert', 'No active dataset available inside current filter nodes to compile CSV.', null, false);
+      return;
+    }
+
+    targetDataset.forEach(s => {
+      const status = s.feesHistory && s.feesHistory[currentKey] ? s.feesHistory[currentKey] : 'PENDING';
+      csvContent += `"${s.name}","${s.phone || 'N/A'}","${s.course}","${s.batch}","${s.customJoinDate}","${status}","${s.feeAmount}"\n`;
+    });
+
+    try {
+      const fileUri = `${FileSystem.documentDirectory}Batchdesk_Ledger_${selectedMonth}_${selectedYear}.csv`;
+      await FileSystem.writeAsStringAsync(fileUri, csvContent, { encoding: FileSystem.EncodingType.UTF8 });
+      await Sharing.shareAsync(fileUri);
+    } catch (error) {
+      triggerCustomAlert('Export Error', 'Could not trigger platform sharing drivers.', null, false);
+    }
+  };
+
+  const getFilteredStudentsData = () => {
+    let baseData = [...students];
+
+    if (activeDashboardTab === 'TRASH') {
+      return baseData.filter(s => s.isDeleted);
+    }
+
+    baseData = baseData.filter(s => !s.isDeleted);
+
+    if (activeDashboardTab === 'DEFAULTERS') {
+      baseData = baseData.filter(student => {
+        let pendingMonthsCount = 0;
+        if (student.feesHistory) {
+          Object.keys(student.feesHistory).forEach(k => {
+            if (student.feesHistory[k] === 'PENDING') pendingMonthsCount++;
+          });
+        }
+        return pendingMonthsCount >= 2;
+      });
+    }
+
+    if (selectedBatchFilter === 'MORNING') {
+      baseData = baseData.filter(s => s.batch && s.batch.includes('Morning'));
+    } else if (selectedBatchFilter === 'EVENING') {
+      baseData = baseData.filter(s => s.batch && s.batch.includes('Evening'));
+    }
+
+    if (searchQuery.trim() !== '') {
+      const query = searchQuery.toLowerCase();
+      baseData = baseData.filter(s => 
+        (s.name && s.name.toLowerCase().includes(query)) ||
+        (s.course && s.course.toLowerCase().includes(query))
+      );
+    }
+
+    return baseData;
+  };
+
+  const handleLogin = async () => {
+    if (!email.trim() || !password) {
+      triggerCustomAlert('Validation Alert', 'All authorization input fields are mandatory.', null, false);
+      return;
+    }
+    try {
+      setIsSubmitting(true);
+      await signInWithEmailAndPassword(auth, email.trim(), password);
+    } catch (error) {
+      triggerCustomAlert('Failed Access', 'Invalid administrative network credentials.', null, false);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const computedDisplayData = getFilteredStudentsData();
+
+  if (showSplash || isBootstrapping) {
+    return (
+      <SafeAreaView style={[styles.container, styles.centeredSplash]}>
+        <ActivityIndicator size="large" color="#0F172A" />
+      </SafeAreaView>
+    );
+  }
+
+  if (!user) {
+    return (
+      <SafeAreaView style={styles.authContainer}>
+        <View style={styles.authCard}>
+          <Text style={styles.authTitle}>Portal Access</Text>
+          <Text style={styles.authSubtitle}>Sign in to manage student metrics</Text>
+          <TextInput style={styles.inputField} placeholder="Email Address" placeholderTextColor="#94A3B8" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" />
+          <TextInput style={styles.inputField} placeholder="Password" placeholderTextColor="#94A3B8" secureTextEntry value={password} onChangeText={setPassword} autoCapitalize="none" />
+          <TouchableOpacity style={styles.primaryAuthBtn} onPress={handleLogin} disabled={isSubmitting}>
+            {isSubmitting ? <ActivityIndicator color="#FFF" size="small" /> : <Text style={styles.primaryAuthBtnText}>Sign In</Text>}
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.container}
-    >
-      <StatusBar barStyle="light-content" />
-      {currentScreen === 'login' ? (
-        /* --- FIXED REGISTER/LOGIN SCREEN --- */
-        <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 24, backgroundColor: '#0B1220' }}>
-          <Text style={styles.title}>{authMode === 'login' ? "Welcome Back" : "Create Account"}</Text>
-          <Text style={styles.subtitle}>{authMode === 'login' ? "Sign in to your Institute" : "Register new teacher/staff account"}</Text>
-
-          <TextInput
-            style={styles.input}
-            placeholder="Email"
-            placeholderTextColor="#64748B"
-            keyboardType="email-address"
-            autoCapitalize="none"
-            value={email}
-            onChangeText={setEmail}
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="Password"
-            placeholderTextColor="#64748B"
-            secureTextEntry
-            autoCapitalize="none"
-            value={password}
-            onChangeText={setPassword}
-          />
-
-          <TouchableOpacity style={[styles.button, { marginTop: 10 }]} onPress={handleAuth}>
-            <Text style={styles.buttonText}>{authMode === 'login' ? "Log In" : "Sign Up Now"}</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={{ marginTop: 24, alignItems: 'center', paddingVertical: 10 }} 
-            onPress={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')}
-          >
-            <Text style={{ color: '#6366F1', fontSize: 16, fontWeight: '600', textDecorationLine: 'underline' }}>
-              {authMode === 'login' ? "New user? Create Account / Sign Up" : "Already have an account? Log In"}
-            </Text>
-          </TouchableOpacity>
-
-          {authMode === 'login' && (
-            <TouchableOpacity 
-              style={{ marginTop: 16, alignItems: 'center', paddingVertical: 10 }} 
-              onPress={handleForgotPassword}
-            >
-              <Text style={{ color: '#94A3B8', fontSize: 14, fontWeight: '500' }}>
-                Forgot Password?
-              </Text>
-            </TouchableOpacity>
-          )}
+    <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="dark-content" />
+      <View style={styles.contentWrapper}>
+        
+        <View style={styles.headerRow}>
+          <Text style={styles.dashboardTitle}>Batchdesk Pro</Text>
+          <TouchableOpacity onPress={() => signOut(auth)}><Text style={styles.logoutText}>Logout</Text></TouchableOpacity>
         </View>
-      ) : (
-        /* --- DASHBOARD SCREEN --- */
-        <FlatList
-          data={filteredStudents}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.scrollContainer}
-          ListHeaderComponent={
-            <View>
-              <View style={styles.headerRow}>
-                <Text style={styles.titleLeft}>Dashboard</Text>
-                <TouchableOpacity onPress={() => {
-                  setEmail('');
-                  setPassword('');
-                  setCurrentScreen('login');
-                }}>
-                  <Text style={styles.logoutText}>Logout</Text>
-                </TouchableOpacity>
-              </View>
 
-              <View style={styles.monthScrollContainer}>
-                <FlatList
-                  horizontal
-                  data={ACADEMIC_MONTHS}
-                  keyExtractor={(item) => item}
-                  showsHorizontalScrollIndicator={false}
-                  renderItem={({ item }) => (
-                    <TouchableOpacity
-                      style={[styles.monthTab, selectedMonth === item && styles.monthTabActive]}
-                      onPress={() => setSelectedMonth(item)}
-                    >
-                      <Text style={[styles.monthTabText, selectedMonth === item && styles.monthTabTextActive]}>
-                        {item}
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-                />
-              </View>
+        <View style={styles.summaryWidgetRow}>
+          <View style={[styles.summaryCard, styles.summaryCardPaid]}>
+            <Text style={styles.summaryLabel}>Total Paid ({selectedMonth})</Text>
+            <Text style={[styles.summaryValue, styles.textPaid]}>₹{statsPaid}</Text>
+          </View>
+          <View style={[styles.summaryCard, styles.summaryCardPending]}>
+            <Text style={styles.summaryLabel}>Total Pending ({selectedMonth})</Text>
+            <Text style={[styles.summaryValue, styles.textPending]}>₹{statsPending}</Text>
+          </View>
+        </View>
 
-              <View style={styles.statsContainer}>
-                <View style={styles.statsCard}>
-                  <Text style={styles.statsLabel}>Total Roster</Text>
-                  <Text style={styles.statsValue}>{students.length}</Text>
-                </View>
-                <View style={styles.statsCard}>
-                  <Text style={styles.statsLabel}>{selectedMonth} Fees</Text>
-                  <Text style={[styles.statsValue, { color: '#6366F1' }]}>₹{totalFeesExpected}</Text>
-                </View>
-                <View style={styles.statsCard}>
-                  <Text style={styles.statsLabel}>Pending</Text>
-                  <Text style={[styles.statsValue, { color: '#EF4444' }]}>₹{totalFeesPending}</Text>
-                </View>
-              </View>
+        <View style={styles.occupancyMetricBar}>
+          <Text style={styles.occupancyLabelText}>👥 Active: {students.filter(s=>!s.isDeleted).length}</Text>
+          <Text style={styles.occupancyLabelText}>☀️ Morning: {morningCount}</Text>
+          <Text style={styles.occupancyLabelText}>🌙 Evening: {eveningCount}</Text>
+        </View>
 
-              <View style={styles.inputContainer}>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Student Name"
-                  placeholderTextColor="#64748B"
-                  value={name}
-                  onChangeText={setName}
-                />
+        <View style={styles.luxuryTabToggleContainer}>
+          <TouchableOpacity style={[styles.luxuryTabBtn, activeDashboardTab === 'LEDGER' && styles.luxuryTabBtnActive]} onPress={() => setActiveDashboardTab('LEDGER')}>
+            <Text style={[styles.luxuryTabBtnText, activeDashboardTab === 'LEDGER' && styles.luxuryTabBtnTextActive]}>📊 Ledger</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.luxuryTabBtn, activeDashboardTab === 'DEFAULTERS' && styles.luxuryTabBtnActive, activeDashboardTab === 'DEFAULTERS' && {backgroundColor: '#FEF2F2'}]} onPress={() => setActiveDashboardTab('DEFAULTERS')}>
+            <Text style={[styles.luxuryTabBtnText, activeDashboardTab === 'DEFAULTERS' && {color: '#EF4444', fontWeight: '800'}]}>⚠️ Overdue</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.luxuryTabBtn, activeDashboardTab === 'TRASH' && styles.luxuryTabBtnActive, activeDashboardTab === 'TRASH' && {backgroundColor: '#F1F5F9'}]} onPress={() => setActiveDashboardTab('TRASH')}>
+            <Text style={[styles.luxuryTabBtnText, activeDashboardTab === 'TRASH' && {color: '#475569', fontWeight: '800'}]}>🗑️ Trash</Text>
+          </TouchableOpacity>
+        </View>
 
-                <View style={styles.rowInputs}>
-                  <TextInput
-                    style={[styles.input, { flex: 1, marginRight: 8 }]}
-                    placeholder="Class / Course"
-                    placeholderTextColor="#64748B"
-                    value={studentClass}
-                    onChangeText={setStudentClass}
-                  />
-                  <TextInput
-                    style={[styles.input, { flex: 1 }]}
-                    placeholder="Phone Number"
-                    placeholderTextColor="#64748B"
-                    keyboardType="phone-pad"
-                    value={phone}
-                    onChangeText={setPhone}
-                  />
-                </View>
-
-                <View style={styles.toggleGroupContainer}>
-                  <Text style={styles.inlineLabel}>Form Batch:</Text>
-                  <View style={styles.toggleGroup}>
-                    <TouchableOpacity 
-                      style={[styles.toggleOption, batch === 'Morning' && styles.toggleOptionActive]}
-                      onPress={() => setBatch('Morning')}
-                    >
-                      <Text style={[styles.toggleOptionText, batch === 'Morning' && styles.toggleOptionTextActive]}>Morning</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity 
-                      style={[styles.toggleOption, batch === 'Evening' && styles.toggleOptionActive]}
-                      onPress={() => setBatch('Evening')}
-                    >
-                      <Text style={[styles.toggleOptionText, batch === 'Evening' && styles.toggleOptionTextActive]}>Evening</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-
-                <View style={styles.admissionSelectorBlock}>
-                  <Text style={styles.admissionLabel}>Admission Starts From:</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{marginVertical: 4}}>
-                    {ACADEMIC_MONTHS.map((m) => (
-                      <TouchableOpacity 
-                        key={m} 
-                        style={[styles.miniMonthPill, admissionMonth === m && styles.miniMonthPillActive]}
-                        onPress={() => setAdmissionMonth(m)}
-                      >
-                        <Text style={[styles.miniMonthText, admissionMonth === m && styles.miniMonthTextActive]}>{m}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-                </View>
-
-                <TextInput
-                  style={styles.input}
-                  placeholder="Exact Admission Date (e.g. 24-06-2026)"
-                  placeholderTextColor="#64748B"
-                  value={admissionDate}
-                  onChangeText={setAdmissionDate}
-                />
-
-                <TextInput
-                  style={styles.input}
-                  placeholder={`Fee Amount for ${selectedMonth} (₹)`}
-                  placeholderTextColor="#64748B"
-                  keyboardType="numeric"
-                  value={amount}
-                  onChangeText={setAmount}
-                />
-
-                <TouchableOpacity style={styles.button} onPress={handleAddStudent}>
-                  <Text style={styles.buttonText}>Submit Record</Text>
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.searchBlockContainer}>
-                <TextInput 
-                  style={styles.searchBarInput}
-                  placeholder="🔍 Search name or phone among entries..."
-                  placeholderTextColor="#64748B"
-                  value={searchQuery}
-                  onChangeText={setSearchQuery}
-                />
-              </View>
-
-              <View style={styles.directoryHeader}>
-                <Text style={styles.sectionTitle}>Directory ({filteredStudents.length})</Text>
-                <View style={styles.filterPillContainer}>
-                  {['All', 'Morning', 'Evening'].map((type) => (
-                    <TouchableOpacity
-                      key={type}
-                      style={[styles.filterPill, batchFilter === type && styles.filterPillActive]}
-                      onPress={() => setBatchFilter(type)}
-                    >
-                      <Text style={[styles.filterPillText, batchFilter === type && styles.filterPillTextActive]}>
-                        {type}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
+        {activeDashboardTab !== 'TRASH' && (
+          <>
+            <View style={styles.searchBarWrapperContainer}>
+              <TextInput style={styles.searchBarInputField} placeholder="Search student name or course track..." placeholderTextColor="#94A3B8" value={searchQuery} onChangeText={setSearchQuery} />
             </View>
-          }
-          renderItem={({ item }) => {
-            const currentMonthRecord = item.history && item.history.find((h) => h.month === selectedMonth);
-            const isBeforeAdmission = isMonthBeforeAdmission(item.admissionMonth, selectedMonth);
 
-            return (
-              <View style={styles.listItem}>
-                <View style={{ flex: 1, marginRight: 8 }}>
-                  <View style={styles.nameRow}>
-                    <Text style={styles.studentName} numberOfLines={1}>{item.name}</Text>
-                    <View style={styles.batchIndicatorBadge}>
-                      <Text style={styles.batchIndicatorText}>{item.batch ? item.batch[0] : ''}</Text>
+            <View style={styles.filterPillsWrapperRow}>
+              {['ALL', 'MORNING', 'EVENING'].map((filter) => (
+                <TouchableOpacity key={filter} style={[styles.filterPillCell, selectedBatchFilter === filter && styles.filterPillCellActive]} onPress={() => setSelectedBatchFilter(filter)}>
+                  <Text style={[styles.filterPillCellText, selectedBatchFilter === filter && styles.filterPillCellTextActive]}>
+                    {filter === 'ALL' ? '⚡ All Filters' : filter === 'MORNING' ? '☀️ Morning' : '🌙 Evening'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </>
+        )}
+
+        {isListLoading ? (
+          <View style={styles.centered}><ActivityIndicator size="small" color="#0F172A" /></View>
+        ) : (
+          <FlatList
+            data={computedDisplayData}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item }) => {
+              if (activeDashboardTab === 'TRASH') {
+                return (
+                  <View style={styles.studentCard}>
+                    <View style={styles.cardHeader}>
+                      <View style={{ flex: 1 }}><Text style={styles.studentName}>{item.name} [TRASHED]</Text><Text style={styles.studentCourse}>{item.course} - {item.batch}</Text></View>
+                    </View>
+                    <View style={[styles.cardFooter, { borderTopWidth: 0, marginTop: 4 }]}>
+                      <TouchableOpacity style={styles.restoreBtn} onPress={() => handleRestoreStudent(item.id)}><Text style={styles.restoreBtnText}>🔄 Restore Student</Text></TouchableOpacity>
+                      <TouchableOpacity style={styles.purgeBtn} onPress={() => handlePermanentPurgeStudent(item.id)}><Text style={styles.purgeBtnText}>Purge Forever</Text></TouchableOpacity>
                     </View>
                   </View>
-
-                  <TouchableOpacity onPress={() => Linking.openURL(`tel:${item.phone}`)}>
-                    <Text style={styles.studentSubtext}>{item.class} • 📞 <Text style={{textDecorationLine:'underline'}}>{item.phone}</Text></Text>
-                  </TouchableOpacity>
-
-                  {isBeforeAdmission ? (
-                    <Text style={[styles.studentAmount, { color: '#64748B', fontSize: 11, fontStyle: 'italic' }]}>
-                      ⚠️ Starts: {item.admissionMonth} (Date: {item.admissionDate})
-                    </Text>
-                  ) : currentMonthRecord ? (
-                    <View>
-                      <Text style={styles.studentAmount}>₹{currentMonthRecord.amount}</Text>
-                      <Text style={{color: '#94A3B8', fontSize: 10}}>Admitted: {item.admissionDate}</Text>
-                    </View>
-                  ) : (
-                    <View>
-                      <Text style={[styles.studentAmount, { color: '#64748B' }]}>No invoice</Text>
-                      <Text style={{color: '#94A3B8', fontSize: 10}}>Admitted: {item.admissionDate}</Text>
-                    </View>
-                  )}
-                </View>
-
-                <View style={{ alignItems: 'flex-end', gap: 6 }}>
-                  {isBeforeAdmission ? (
-                    <View style={styles.blankBadgePlaceholder} />
-                  ) : currentMonthRecord ? (
-                    <TouchableOpacity
-                      style={[
-                        styles.statusBadge,
-                        currentMonthRecord.status === 'Paid' ? styles.badgePaid : styles.badgePending,
-                      ]}
-                      onPress={() => toggleStatus(item.id)}
-                    >
-                      <Text style={[styles.statusText, { color: currentMonthRecord.status === 'Paid' ? '#22C55E' : '#EF4444' }]}>
-                        {currentMonthRecord.status}
-                      </Text>
-                    </TouchableOpacity>
-                  ) : (
-                    <TouchableOpacity
-                      style={styles.invoiceCreationButton}
-                      onPress={() => createMissingInvoice(item.id, '2000')}
-                    >
-                      <Text style={styles.invoiceCreationText}>+ Invoice</Text>
-                    </TouchableOpacity>
-                  )}
-
-                  <View style={{flexDirection: 'row', gap: 4}}>
-                    {!isBeforeAdmission && currentMonthRecord && currentMonthRecord.status === 'Pending' && (
-                      <TouchableOpacity 
-                        style={styles.whatsappActionBadge}
-                        onPress={() => triggerWhatsAppReminder(item.name, item.phone, currentMonthRecord.amount)}
-                      >
-                        <Text style={styles.whatsappActionText}>💬 Ping</Text>
-                      </TouchableOpacity>
-                    )}
-
-                    <TouchableOpacity 
-                      style={styles.deleteActionBadge}
-                      onPress={() => handleDeleteStudent(item.id)}
-                    >
-                      <Text style={styles.deleteActionText}>❌ Drop</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
+                );
+              }
+              return (
+                <StudentCardItem 
+                  item={item} 
+                  selectedMonth={selectedMonth} 
+                  selectedYear={selectedYear} 
+                  onToggleStatus={handleToggleFeesStatus}
+                  onDelete={handleSoftDropStudent} 
+                  onSendWhatsApp={handleSendWhatsAppReminder}
+                />
+              );
+            }}
+            ListEmptyComponent={
+              <View style style={styles.emptyStateCard}>
+                <Text style={styles.emptyStateText}>
+                  {activeDashboardTab === 'TRASH' ? 'Trash node buffer is entirely clean.' : 'No data packets matched this active scope configuration.'}
+                </Text>
               </View>
-            );
-          }}
-          ListEmptyComponent={<Text style={styles.emptyText}>No matches found in database rosters.</Text>}
-        />
-      )}
-    </KeyboardAvoidingView>
+            }
+            ListHeaderComponent={
+              <View style={styles.listHeaderRow}>
+                {activeDashboardTab === 'LEDGER' ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <TouchableOpacity style={styles.premiumDropdownCapsule} onPress={() => setIsDatePickerOpen(true)}>
+                      <Text style={styles.premiumDropdownCapsuleText}>📅 {selectedMonth} {selectedYear}  ▼</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.exportExcelLinkBtn} onPress={handleExportMonthlyLedgerCSV}>
+                      <Text style={styles.exportExcelLinkText}>📥 Export CSV</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <Text style={styles.defaulterListTitleLabel}>
+                    {activeDashboardTab === 'TRASH' ? '🗑️ Discarded Node Trash Bin' : '🚨 Multi-Month Overdue Balance'}
+                  </Text>
+                )}
+
+                {activeDashboardTab !== 'TRASH' && (
+                  <TouchableOpacity style={styles.addStudentLinkBtn} onPress={() => setIsModalOpen(true)}>
+                    <Text style={styles.addStudentLinkText}>+ Add Student</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            }
+            contentContainerStyle={styles.verticalListContent}
+          />
+        )}
+      </View>
+
+      <Modal animationType="fade" transparent={true} visible={customAlertVisible} onRequestClose={() => setCustomAlertVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContentCard, { maxWidth: 320, alignItems: 'center' }]}>
+            <Text style={[styles.modalTitle, { fontSize: 16 }]}>{customAlertTitle}</Text>
+            <Text style={[styles.modalSubtitle, { marginTop: 8, marginBottom: 20, fontSize: 13, color: '#334155', textAlign: 'center' }]}>{customAlertMsg}</Text>
+            <View style={{ flexDirection: 'row', width: '100%' }}>
+              {customAlertCancelVisible && (
+                <TouchableOpacity style={[styles.cancelActionBtn, { paddingVertical: 8, marginTop: 0 }]} onPress={() => setCustomAlertVisible(false)}>
+                  <Text style={styles.cancelActionText}>Cancel</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity style={[styles.primaryAuthBtn, { flex: 1, marginTop: 0, paddingVertical: 8, marginLeft: customAlertCancelVisible ? 8 : 0 }]} onPress={customAlertConfirmHandler}>
+                <Text style={styles.primaryAuthBtnText}>Confirm</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal animationType="fade" transparent={true} visible={isDatePickerOpen} onRequestClose={() => setIsDatePickerOpen(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContentCard, { maxWidth: 340, maxHeight: '80%' }]}>
+            <Text style={styles.modalTitle}>Select Target Period</Text>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <Text style={styles.innerLabel}>Months:</Text>
+              <View style={styles.gridContainer}>
+                {monthsArray.map((m) => (
+                  <TouchableOpacity key={m} style={[styles.gridItemCell, selectedMonth === m && styles.gridItemCellActive]} onPress={() => setSelectedMonth(m)}>
+                    <Text style={[styles.gridItemText, selectedMonth === m && styles.gridItemTextActive]}>{m}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <Text style={[styles.innerLabel, { marginTop: 16 }]}>Years:</Text>
+              <View style={styles.gridContainer}>
+                {yearsArray.map((y) => (
+                  <TouchableOpacity key={y} style={[styles.gridItemCell, selectedYear === y && styles.gridItemCellActive]} onPress={() => setSelectedYear(y)}>
+                    <Text style={[styles.gridItemText, selectedYear === y && styles.gridItemTextActive]}>{y}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </ScrollView>
+            <TouchableOpacity style={[styles.primaryAuthBtn, { marginTop: 16 }]} onPress={() => setIsDatePickerOpen(false)}><Text style={styles.primaryAuthBtnText}>Apply Layout</Text></TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal animationType="slide" transparent={true} visible={isModalOpen} onRequestClose={() => setIsModalOpen(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContentCard}>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <Text style={styles.modalTitle}>New Student Registration</Text>
+              <Text style={styles.modalSubtitle}>Scope allocation: Global Ledger Cluster</Text>
+              
+              <TextInput style={styles.modalInput} placeholder="Student Full Name" placeholderTextColor="#94A3B8" value={formName} onChangeText={setFormName} />
+              <TextInput style={styles.modalInput} placeholder="WhatsApp Phone (10 digits only)" placeholderTextColor="#94A3B8" keyboardType="phone-pad" maxLength={10} value={formPhone} onChangeText={setFormPhone} />
+              <TextInput style={styles.modalInput} placeholder="Enrolled Course Track" placeholderTextColor="#94A3B8" value={formCourse} onChangeText={setFormCourse} />
+              <TextInput style={styles.modalInput} placeholder="Fee Amount Per Month (INR)" placeholderTextColor="#94A3B8" keyboardType="numeric" value={formFee} onChangeText={setFormFee} />
+              <TextInput style={styles.modalInput} placeholder="Custom Join Date (Optional)" placeholderTextColor="#94A3B8" value={formCustomDate} onChangeText={setFormCustomDate} />
+              
+              <Text style={styles.innerLabel}>Select Batch Node Allocation:</Text>
+              <View style={styles.toggleRow}>
+                {['☀️ Morning Batch', '🌙 Evening Batch'].map(b => (
+                  <TouchableOpacity key={b} style={[styles.toggleOptionBtn, formBatch === b && styles.toggleOptionBtnActive]} onPress={() => setFormBatch(b)}>
+                    <Text style={[styles.toggleOptionText, formBatch === b && styles.toggleOptionTextActive]}>{b}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <View style={styles.modalActionsRow}>
+                <TouchableOpacity style={styles.cancelActionBtn} onPress={() => setIsModalOpen(false)}><Text style={styles.cancelActionText}>Cancel</Text></TouchableOpacity>
+                <TouchableOpacity style={styles.saveActionBtn} onPress={handleAddStudentSubmit} disabled={isFormSaving}>
+                  {isFormSaving ? <ActivityIndicator color="#FFF" size="small" /> : <Text style={styles.saveActionText}>Register</Text>}
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0B1220' },
-  scrollContainer: { paddingTop: 50, paddingHorizontal: 24, paddingBottom: 40 },
-  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-  title: { fontSize: 32, fontWeight: '700', color: '#E5E7EB', textAlign: 'center', marginBottom: 8 },
-  titleLeft: { fontSize: 26, fontWeight: '700', color: '#E5E7EB' },
-  directoryHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, marginTop: 8 },
-  sectionTitle: { fontSize: 12, fontWeight: '600', color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5 },
-  subtitle: { fontSize: 15, color: '#94A3B8', marginBottom: 36, textAlign: 'center' },
-  monthScrollContainer: { marginBottom: 20, height: 40 },
-  monthTab: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, backgroundColor: '#111827', marginRight: 8, borderWidth: 1, borderColor: '#1F2937', justifyContent: 'center' },
-  monthTabActive: { backgroundColor: '#6366F1', borderColor: '#6366F1' },
-  monthTabText: { color: '#94A3B8', fontSize: 14, fontWeight: '600' },
-  monthTabTextActive: { color: '#FFFFFF' },
-  statsContainer: { flexDirection: 'row', justifyContent: 'space-between', gap: 8, marginBottom: 20 },
-  statsCard: { flex: 1, backgroundColor: '#111827', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#1F2937' },
-  statsLabel: { fontSize: 10, fontWeight: '600', color: '#94A3B8', textTransform: 'uppercase', marginBottom: 4 },
-  statsValue: { fontSize: 16, fontWeight: '700', color: '#E5E7EB' },
-  inputContainer: { marginBottom: 16 },
-  rowInputs: { flexDirection: 'row', justifyContent: 'space-between' },
-  input: { backgroundColor: '#111827', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 10, fontSize: 15, color: '#E5E7EB', marginBottom: 10, borderWidth: 1, borderColor: '#1F2937' },
-  searchBlockContainer: { marginBottom: 14 },
-  searchBarInput: { backgroundColor: '#111827', paddingVertical: 14, paddingHorizontal: 16, borderRadius: 12, fontSize: 15, color: '#E5E7EB', borderWidth: 1, borderColor: '#374151' },
-  toggleGroupContainer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#111827', padding: 8, borderRadius: 10, marginBottom: 10, borderWidth: 1, borderColor: '#1F2937' },
-  inlineLabel: { color: '#94A3B8', fontSize: 14, fontWeight: '500', paddingLeft: 8 },
-  toggleGroup: { flexDirection: 'row', backgroundColor: '#0B1220', padding: 4, borderRadius: 8 },
-  toggleOption: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 6 },
-  toggleOptionActive: { backgroundColor: '#1F2937' },
-  toggleOptionText: { color: '#64748B', fontSize: 13, fontWeight: '600' },
-  toggleOptionTextActive: { color: '#E5E7EB' },
-  admissionSelectorBlock: { backgroundColor: '#111827', padding: 10, borderRadius: 10, marginBottom: 10, borderWidth: 1, borderColor: '#1F2937' },
-  admissionLabel: { color: '#94A3B8', fontSize: 13, fontWeight: '500', marginBottom: 4, paddingLeft: 4 },
-  miniMonthPill: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6, backgroundColor: '#0B1220', marginRight: 6, borderWidth: 1, borderColor: '#1F2937' },
-  miniMonthPillActive: { backgroundColor: '#6366F1', borderColor: '#6366F1' },
-  miniMonthText: { color: '#64748B', fontSize: 12, fontWeight: '600' },
-  miniMonthTextActive: { color: '#FFFFFF' },
-  filterPillContainer: { flexDirection: 'row', backgroundColor: '#111827', padding: 4, borderRadius: 8, borderWidth: 1, borderColor: '#1F2937' },
-  filterPill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, marginLeft: 4 },
-  filterPillActive: { backgroundColor: '#6366F1' },
-  filterPillText: { color: '#94A3B8', fontSize: 12, fontWeight: '600' },
-  filterPillTextActive: { color: '#FFFFFF' },
-  button: { backgroundColor: '#6366F1', paddingVertical: 14, borderRadius: 10, alignItems: 'center' },
-  buttonText: { color: '#FFFFFF', fontSize: 15, fontWeight: '600' },
-  logoutText: { color: '#94A3B8', fontSize: 15, fontWeight: '500' },
-  listItem: { backgroundColor: '#111827', padding: 14, borderRadius: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, borderWidth: 1, borderColor: '#1F2937' },
-  nameRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 2 },
-  studentName: { fontSize: 15, fontWeight: '600', color: '#E5E7EB', marginRight: 6, maxWidth: '80%' },
-  batchIndicatorBadge: { backgroundColor: '#1F2937', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 },
-  batchIndicatorText: { color: '#94A3B8', fontSize: 10, fontWeight: '700' },
-  studentSubtext: { fontSize: 12, color: '#94A3B8', marginBottom: 4 },
-  studentAmount: { fontSize: 14, fontWeight: '600', color: '#6366F1' },
-  statusBadge: { paddingVertical: 5, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1 },
-  badgePaid: { backgroundColor: 'rgba(34, 197, 94, 0.1)', borderColor: 'rgba(34, 197, 94, 0.2)' },
-  badgePending: { backgroundColor: 'rgba(239, 68, 68, 0.1)', borderColor: 'rgba(239, 68, 68, 0.2)' },
-  statusText: { fontSize: 11, fontWeight: '700' },
-  blankBadgePlaceholder: { height: 26, width: 60 },
-  whatsappActionBadge: { backgroundColor: 'rgba(34, 197, 94, 0.05)', borderColor: 'rgba(34, 197, 94, 0.2)', borderWidth: 1, paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6 },
-  whatsappActionText: { color: '#22C55E', fontSize: 11, fontWeight: '600' },
-  deleteActionBadge: { backgroundColor: 'rgba(239, 68, 68, 0.05)', borderColor: 'rgba(239, 68, 68, 0.2)', borderWidth: 1, paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6 },
-  deleteActionText: { color: '#EF4444', fontSize: 11, fontWeight: '600' },
-  invoiceCreationButton: { backgroundColor: 'rgba(99, 102, 241, 0.1)', borderColor: 'rgba(99, 102, 241, 0.3)', borderWidth: 1, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8 },
-  invoiceCreationText: { color: '#6366F1', fontSize: 12, fontWeight: '600' },
-  emptyText: { textAlign: 'center', color: '#94A3B8', marginTop: 30, fontSize: 14 }
+  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  centered: { justifyContent: 'center', alignItems: 'center', paddingVertical: 32 },
+  centeredSplash: { flex: 1, backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center' },
+  authContainer: { flex: 1, backgroundColor: '#F8FAFC', justifyContent: 'center', alignItems: 'center' },
+  authCard: { width: '100%', maxWidth: 340, backgroundColor: '#FFFFFF', padding: 24, borderRadius: 20, borderWidth: 1, borderColor: '#E2E8F0' },
+  authTitle: { fontSize: 22, fontWeight: '800', color: '#0F172A', textAlign: 'center' },
+  authSubtitle: { fontSize: 13, color: '#64748B', textAlign: 'center', marginTop: 4, marginBottom: 20 },
+  inputField: { backgroundColor: '#F1F5F9', paddingHorizontal: 16, paddingVertical: 12, borderRadius: 10, color: '#0F172A', marginBottom: 12 },
+  primaryAuthBtn: { backgroundColor: '#0F172A', paddingVertical: 12, borderRadius: 10, alignItems: 'center', marginTop: 8 },
+  primaryAuthBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14 },
+  contentWrapper: { flex: 1, paddingHorizontal: 16, paddingTop: 4 },
+  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
+  dashboardTitle: { fontSize: 22, fontWeight: '900', color: '#0F172A', letterSpacing: -0.5 },
+  logoutText: { color: '#EF4444', fontWeight: '700', fontSize: 13 },
+  
+  summaryWidgetRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
+  summaryCard: { flex: 1, padding: 12, borderRadius: 14, borderWidth: 1, alignItems: 'center' },
+  summaryCardPaid: { backgroundColor: '#F0FDF4', borderColor: '#DCFCE7', marginRight: 4 },
+  summaryCardPending: { backgroundColor: '#FEF2F2', borderColor: '#FEE2E2', marginLeft: 4 },
+  summaryLabel: { fontSize: 11, fontWeight: '600', color: '#64748B', marginBottom: 2 },
+  summaryValue: { fontSize: 18, fontWeight: '800' },
+
+  occupancyMetricBar: { flexDirection: 'row', justifyContent: 'space-around', backgroundColor: '#FFFFFF', padding: 8, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 10 },
+  occupancyLabelText: { fontSize: 11, fontWeight: '700', color: '#475569' },
+
+  luxuryTabToggleContainer: { flexDirection: 'row', backgroundColor: '#E2E8F0', padding: 4, borderRadius: 12, marginBottom: 10 },
+  luxuryTabBtn: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 10 },
+  luxuryTabBtnActive: { backgroundColor: '#FFFFFF', elevation: 1 },
+  luxuryTabBtnText: { fontSize: 12, fontWeight: '700', color: '#64748B' },
+  luxuryTabBtnTextActive: { color: '#0F172A' },
+
+  searchBarWrapperContainer: { marginBottom: 8 },
+  searchBarInputField: { backgroundColor: '#FFFFFF', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, borderWidth: 1, borderColor: '#E2E8F0', color: '#0F172A', fontSize: 13 },
+
+  filterPillsWrapperRow: { flexDirection: 'row', marginBottom: 12 },
+  filterPillCell: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E2E8F0', marginRight: 6 },
+  filterPillCellActive: { backgroundColor: '#0F172A', borderColor: '#0F172A' },
+  filterPillCellText: { fontSize: 11, fontWeight: '700', color: '#64748B' },
+  filterPillCellTextActive: { color: '#FFFFFF' },
+
+  listHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  premiumDropdownCapsule: { backgroundColor: '#FFFFFF', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10, borderWidth: 1, borderColor: '#CBD5E1' },
+  premiumDropdownCapsuleText: { fontSize: 12, fontWeight: '700', color: '#0F172A' },
+  exportExcelLinkBtn: { backgroundColor: '#FFFFFF', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, borderWidth: 1, borderColor: '#475569', marginLeft: 8 },
+  exportExcelLinkText: { fontSize: 11, fontWeight: '700', color: '#475569' },
+  defaulterListTitleLabel: { fontSize: 13, fontWeight: '800', color: '#EF4444' },
+
+  addStudentLinkBtn: { backgroundColor: '#0F172A', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8 },
+  addStudentLinkText: { color: '#FFF', fontWeight: '700', fontSize: 12 },
+  verticalListContent: { paddingBottom: 32 },
+  
+  emptyStateCard: { backgroundColor: '#FFFFFF', padding: 24, borderRadius: 14, borderStyle: 'dashed', borderWidth: 1.5, borderColor: '#CBD5E1', alignItems: 'center', marginTop: 12 },
+  emptyStateText: { color: '#64748B', fontSize: 12, fontWeight: '600', textAlign: 'center' },
+
+  gridContainer: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 6 },
+  gridItemCell: { width: '22%', paddingVertical: 8, backgroundColor: '#F1F5F9', borderRadius: 8, alignItems: 'center', margin: '1.5%' },
+  gridItemCellActive: { backgroundColor: '#0F172A' },
+  gridItemText: { fontSize: 11, fontWeight: '700', color: '#475569' },
+  gridItemTextActive: { color: '#FFFFFF' },
+
+  studentCard: { backgroundColor: '#FFFFFF', padding: 14, borderRadius: 14, marginBottom: 10, borderWidth: 1, borderColor: '#E2E8F0' },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  textContainer: { flex: 1, paddingRight: 8 },
+  studentName: { fontSize: 15, fontWeight: '700', color: '#0F172A' },
+  studentCourse: { color: '#475569', fontSize: 12, marginTop: 1 },
+  rightHeaderBlock: { alignItems: 'flex-end' },
+  cardFeeText: { fontSize: 14, fontWeight: '800', color: '#0F172A', marginBottom: 2 },
+  statusBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20 },
+  badgePaid: { backgroundColor: '#DCFCE7' },
+  badgePending: { backgroundColor: '#FEE2E2' },
+  statusText: { fontSize: 10, fontWeight: '700' },
+  textPaid: { color: '#15803D' },
+  textPending: { color: '#B91C1C' },
+  cardFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, borderTopWidth: 1, borderTopColor: '#F1F5F9', paddingTop: 8 },
+  footerMeta: { color: '#64748B', fontSize: 11, fontWeight: '600' },
+  
+  actionButtonsCluster: { flexDirection: 'row', alignItems: 'center' },
+  whatsappActionBtn: { backgroundColor: '#DCFCE7', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, marginRight: 6, borderWidth: 0.5, borderColor: '#BBF7D0' },
+  whatsappActionBtnText: { color: '#16A34A', fontSize: 11, fontWeight: '700' },
+  dropBtn: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, backgroundColor: '#FEF2F2' },
+  dropBtnText: { color: '#EF4444', fontWeight: '700', fontSize: 11 },
+
+  restoreBtn: { backgroundColor: '#E0F2FE', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6 },
+  restoreBtnText: { color: '#0369A1', fontSize: 11, fontWeight: '700' },
+  purgeBtn: { backgroundColor: '#FEF2F2', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6, marginLeft: 8 },
+  purgeBtnText: { color: '#EF4444', fontSize: 11, fontWeight: '700' },
+
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.4)', justifyContent: 'center', alignItems: 'center', padding: 20 },
+  modalContentCard: { width: '100%', maxWidth: 340, backgroundColor: '#FFF', borderRadius: 20, padding: 20, elevation: 5 },
+  modalSubtitle: { fontSize: 11, color: '#64748B', textAlign: 'center', marginTop: 2, marginBottom: 16 },
+  modalInput: { backgroundColor: '#F1F5F9', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 8, color: '#0F172A', marginBottom: 10, fontSize: 13 },
+  innerLabel: { fontSize: 12, fontWeight: '700', color: '#334155', marginTop: 4, marginBottom: 4 },
+  toggleRow: { flexDirection: 'row', marginBottom: 12 },
+  toggleOptionBtn: { flex: 1, paddingVertical: 8, backgroundColor: '#F1F5F9', alignItems: 'center', borderRadius: 8, marginRight: 4, borderWidth: 1, borderColor: '#E2E8F0' },
+  toggleOptionBtnActive: { backgroundColor: '#0F172A', borderColor: '#0F172A' },
+  toggleOptionText: { fontSize: 11, fontWeight: '600', color: '#475569' },
+  toggleOptionTextActive: { color: '#FFFFFF', fontWeight: '700' },
+  modalActionsRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 16 },
+  cancelActionBtn: { flex: 1, paddingVertical: 10, alignItems: 'center', borderRadius: 8, backgroundColor: '#F1F5F9', marginTop: 0 },
+  cancelActionText: { color: '#475569', fontWeight: '700', fontSize: 13 },
+  saveActionBtn: { flex: 1, paddingVertical: 10, alignItems: 'center', borderRadius: 8, backgroundColor: '#0F172A', marginLeft: 12 },
+  saveActionText: { color: '#FFF', fontWeight: '700', fontSize: 13 }
 });
