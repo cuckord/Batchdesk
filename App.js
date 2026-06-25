@@ -146,6 +146,15 @@ export default function App() {
   const [password, setPassword] = useState('');
 
   const yearsArray = Array.from({ length: 15 }, (_, i) => (2024 + i).toString());
+  const onEdit = (item) => {
+  setEditingStudent(item);
+  setFormName(item.name || '');
+  setFormPhone(item.phone || '');
+  setFormCourse(item.course || '');
+  setFormFee(item.feeAmount ? item.feeAmount.toString() : '');
+  setFormBatch(item.batch || '☀️ Morning Batch');
+  setIsModalOpen(true);
+};
 
   useEffect(() => {
     const timer = setTimeout(() => { setShowSplash(false); }, 1500);
