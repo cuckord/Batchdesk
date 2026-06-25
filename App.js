@@ -70,17 +70,28 @@ const StudentCardItem = React.memo(({ item, selectedMonth, selectedYear, onToggl
         <Text style={styles.footerMeta}>Total Due: ₹{totalOverdueAmount}</Text>
         
         <View style={styles.actionButtonsCluster}>
-          <TouchableOpacity 
-            onPress={() => onSendWhatsApp(item, totalOverdueAmount)}
-            style={styles.whatsappActionBtn}
-          >
-            <Text style={styles.whatsappActionBtnText}>💬 Remind</Text>
-          </TouchableOpacity>
+  {/* WhatsApp Remind Button (Pehle se hai) */}
+  <TouchableOpacity
+    onPress={() => onSendWhatsApp(item, totalOverdueAmount)}
+    style={styles.whatsappActionBtn}
+  >
+    <Text style={styles.whatsappActionBtnText}>💬 Remind</Text>
+  </TouchableOpacity>
 
-          <TouchableOpacity onPress={() => onDelete(item)} style={styles.dropBtn}>
-            <Text style={styles.dropBtnText}>Drop</Text>
-          </TouchableOpacity>
-        </View>
+  {/* 🛠️ NAYA EDIT BUTTON */}
+  <TouchableOpacity
+    onPress={() => onEdit(item)} 
+    style={[styles.dropBtn, { backgroundColor: '#e0e0e0', marginRight: 8 }]} // Isko alag dikhane ke liye halka gray color
+  >
+    <Text style={[styles.dropBtnText, { color: '#333' }]}>Edit</Text>
+  </TouchableOpacity>
+
+  {/* Drop/Delete Button (Pehle se hai) */}
+  <TouchableOpacity onPress={() => onDelete(item)} style={styles.dropBtn}>
+    <Text style={styles.dropBtnText}>Drop</Text>
+  </TouchableOpacity>
+</View>
+
       </View>
     </View>
   );
