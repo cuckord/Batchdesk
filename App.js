@@ -29,7 +29,7 @@ import * as Sharing from 'expo-sharing';
 
 const db = getFirestore();
 
-const StudentCardItem = React.memo(({ item, selectedMonth, selectedYear, onToggleStatus, onDelete, onSendWhatsApp }) => {
+const StudentCardItem = React.memo(({ item, selectedMonth, selectedYear, onToggleStatus, onDelete, onSendWhatsApp ,onEdit }) => {
   const currentKey = `${selectedMonth} ${selectedYear}`;
   const currentStatus = item.feesHistory && item.feesHistory[currentKey] ? item.feesHistory[currentKey] : 'PENDING';
   const isPaid = currentStatus === 'PAID';
