@@ -131,6 +131,7 @@ export default function App() {
   const [customAlertCancelVisible, setCustomAlertCancelVisible] = useState(true);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingStudent, setEditingStudent] = useState(null);
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   
   const [formName, setFormName] = useState('');
