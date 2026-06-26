@@ -230,41 +230,62 @@ export default function App() {
   };
 
   const handleAddStudentSubmit = async () => {
-    const cleanPhone = formPhone.trim().replace(/[^0-9]/g, '');
-    if (!formName.trim() || !formCourse.trim() || !formFee.trim() || cleanPhone.length !== 10) {
-      triggerCustomAlert('Validation Error', 'Please populate valid details. Phone node must be exact 10 digits.', null, false);
-      return;
-    }
+  const cleanPhone = formPhone.trim().replace(/[^\d]/g, '');
+  if (!formName.trim() || !formCourse.trim() || !formFee.trim() || cleanPhone.length !== 10) {
+    triggerCustomAlert('Validation Error', 'Please populate valid details. Phone node must be exact 10 digits.', null, false);
+    return;
+  }
 
+  // Duplicate check sirf naye student ke liye lagayein, edit ke waqt skip karein
+  if (!editingStudent) {
     const isDuplicate = students.some(s => !s.isDeleted && s.name.toLowerCase() === formName.trim().toLowerCase() && s.phone === cleanPhone);
     if (isDuplicate) {
       triggerCustomAlert('Security Hold', 'A student record with the identical name and phone architecture already exists.', null, false);
       return;
     }
+  }
 
-    try {
-      setIsFormSaving(true);
-      const today = new Date();
-      const currentDay = today.getDate().toString().padStart(2, '0');
-      const defaultDateStr = `${currentDay} ${currentMonthStr} ${currentYearStr}`;
-      const initialMonthKey = `${selectedMonth} ${selectedYear}`;
-      
+  try {
+    setIsFormSaving(true);
+    const today = new Date();
+    const currentDay = today.getDate().toString().padStart(2, '0');
+    const defaultDateStr = `${currentDay} ${currentMonthStr} ${currentYearStr}`;
+    const initialMonthKey = `${selectedMonth} ${selectedYear}`;
+
+    const studentData = {
+      name: formName.trim(),
+      phone: cleanPhone,
+      course: formCourse.trim(),
+      feeAmount: formFee.trim(),
+      batch: formBatch,
+      customJoinDate: formCustomDate.trim() || defaultDateStr
+    };
+
+    if (editingStudent) {
+      // 📝 EDIT LOGIC: Purane student ko update karo
+      const studentRef = doc(db, 'students', editingStudent.id);
+      await updateDoc(studentRef, studentData);
+    } else {
+      // ➕ ADD LOGIC: Naya student insert karo
       await addDoc(collection(db, 'students'), {
-        name: formName.trim(),
-        phone: cleanPhone,
-        course: formCourse.trim(),
-        feeAmount: formFee.trim(),
-        batch: formBatch,
-        customJoinDate: formCustomDate.trim() || defaultDateStr,
-        isDeleted: false, 
+        ...studentData,
+        isDeleted: false,
         feesHistory: {
           [initialMonthKey]: 'PAID'
         }
       });
+    }
 
-      setFormName(''); setFormPhone(''); setFormCourse(''); setFormFee(''); setFormCustomDate('');
-      setIsModalOpen(false);
-      triggerCustomAlert('Success', 'Student node generated across global cluster views.', null, false);
+    // Form clear aur reset karo
+    setFormName('');
+    setFormPhone('');
+    setFormCourse('');
+    setFormFee('');
+    setFormCustomDate('');
+    setEditingStudent(null); // Reset edit state
+    setIsModalOpen(false);
+    
+    triggerCustomAlert('Success', editingStudent ? 'Student profile updated across global cluster views.' : 'Student node generated across global cluster views.', null, false);
     } catch (error) {
       triggerCustomAlert('Error', error.message, null, false);
     } finally {
