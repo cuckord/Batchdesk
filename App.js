@@ -537,6 +537,7 @@ export default function App() {
                   selectedYear={selectedYear} 
                   onToggleStatus={handleToggleFeesStatus}
                   onDelete={handleSoftDropStudent} 
+                  onSendWhatsApp={handleSendWhatsAppReminder}
                   onEdit={onEdit}
                 />
               );
